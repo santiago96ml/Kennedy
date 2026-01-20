@@ -140,7 +140,7 @@ const parseChatHistory = (rows: any[]) => {
 };
 
 // --- COMPONENTE PRINCIPAL ---
-export default function KennedyView() {
+export default function Dashboard() {
   // Estados Generales
   const [students, setStudents] = useState<Student[]>([]);
   const [careers, setCareers] = useState<Career[]>([]);
@@ -448,7 +448,9 @@ export default function KennedyView() {
     try {
         const headers = await getAuthHeader();
         const res = await fetch(`${API_URL}/chat-history/${selectedStudent.phone}`, { headers });
-        let chatContextText = res.ok ? parseChatForAI(await res.json()) : "(Sin historial)";
+        // --- CORRECCIÓN: Usamos parseChatHistory aquí ---
+        let chatContextText = res.ok ? parseChatHistory(await res.json()) : "(Sin historial)";
+        
         const systemPrompt = selectedStudent.secretaria 
             ? `El alumno solicitó hablar con secretaria. Resume la conversación y explica qué necesita urgentemente.`
             : `Eres un experto analista académico. Misión: analizar la conversación y perfil del alumno.`;
@@ -499,7 +501,7 @@ export default function KennedyView() {
   };
   
   const handleOpenCareerModal = (c: Career) => { 
-      setSelectedStudent(null); // Asegura que no se muestre el alumno
+      setSelectedStudent(null); 
       setSelectedCareer(c); 
       setIsModalVisible(true); 
       setTimeout(() => setIsModalOpen(true), 10); 
