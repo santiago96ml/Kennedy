@@ -448,7 +448,6 @@ export default function Dashboard() {
     try {
         const headers = await getAuthHeader();
         const res = await fetch(`${API_URL}/chat-history/${selectedStudent.phone}`, { headers });
-        // --- CORRECCIÓN: Usamos parseChatHistory aquí ---
         let chatContextText = res.ok ? parseChatHistory(await res.json()) : "(Sin historial)";
         
         const systemPrompt = selectedStudent.secretaria 
@@ -510,7 +509,7 @@ export default function Dashboard() {
   const filteredCareers = careers.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
-    <div className="space-y-6 p-1 min-h-screen pb-20 select-none">
+    <div className="space-y-6 p-1 min-h-screen pb-20 select-none animate-enter">
       
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-800 pb-6">

@@ -52,7 +52,6 @@ export default function Login() {
             email: email, 
             rol: null, // Sin rol = Sin acceso
             sede: null // Sin sede asignada
-            // Aquí podrías agregar created_at si tu tabla lo requiere explícitamente
           }
         ]);
         setStatus('pending_approval');
@@ -79,7 +78,7 @@ export default function Login() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin // Vuelve a esta misma página para ejecutar verifyStaffAccess
+        redirectTo: window.location.origin 
       }
     });
     if (error) {
@@ -159,7 +158,7 @@ export default function Login() {
 
   // VISTA 3: FORMULARIO DE LOGIN (Idle)
   return (
-    <div className="min-h-screen w-full bg-slate-950 flex relative overflow-hidden">
+    <div className="min-h-screen w-full bg-slate-950 flex relative overflow-hidden animate-enter">
       
       {/* Lado Izquierdo - Decorativo */}
       <div className="hidden lg:flex w-1/2 relative items-center justify-center p-12">

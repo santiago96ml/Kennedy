@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard'; // Tu KennedyView renombrado
 import { MainLayout } from './components/layout/MainLayout'; // <--- IMPORTANTE
 import { useEffect, useState } from 'react';
 import { supabase } from './lib/supabaseClient';
+import './App.css'
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const [session, setSession] = useState<any>(null);
