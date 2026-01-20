@@ -1,42 +1,117 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+/* --- 1. CONFIGURACIÓN BASE --- */
+:root {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark; /* Fuerza el modo oscuro en el navegador */
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+/* Reseteo para asegurar pantalla completa */
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #020617; /* Coincide con bg-slate-950 de Tailwind */
+  color: #e2e8f0; /* Coincide con text-slate-200 */
+  overflow-x: hidden; /* Evita scroll horizontal indeseado */
 }
 
-@keyframes logo-spin {
+/* Color de selección de texto (ese azul al resaltar texto) */
+::selection {
+  background-color: rgba(37, 99, 235, 0.3); /* Azul Kennedy */
+  color: #ffffff;
+}
+
+/* --- 2. SCROLLBAR PERSONALIZADO (Muy importante para estética Dark) --- */
+/* Funciona en Chrome, Edge, Safari */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f172a; /* Fondo del track (slate-900) */
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #334155; /* Color de la barra (slate-700) */
+  border-radius: 4px;
+  border: 2px solid #0f172a; /* Borde para dar efecto flotante */
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #475569; /* Más claro al pasar el mouse (slate-600) */
+}
+
+/* --- 3. ANIMACIONES GLOBALES --- */
+
+/* Entrada suave hacia arriba (Fade In Up) */
+@keyframes fadeInUp {
   from {
-    transform: rotate(0deg);
+    opacity: 0;
+    transform: translateY(20px);
   }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
+/* Pulsación suave (para estados de carga o alertas) */
+@keyframes softPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
-.card {
-  padding: 2em;
+/* Flotar (para elementos decorativos) */
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+  100% { transform: translateY(0px); }
 }
 
-.read-the-docs {
-  color: #888;
+/* Efecto de brillo que pasa */
+@keyframes shimmer {
+  0% { background-position: -1000px 0; }
+  100% { background-position: 1000px 0; }
+}
+
+/* --- 4. CLASES DE UTILIDAD PARA USAR EN TUS COMPONENTES --- */
+
+/* Úsala en contenedores principales: className="animate-enter" */
+.animate-enter {
+  animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Úsala en elementos decorativos: className="animate-float" */
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Para textos que necesitan resaltar */
+.text-gradient {
+  background: linear-gradient(to right, #60a5fa, #a855f7); /* Azul a Violeta */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* --- 5. REDEFINICIÓN DE ESTILOS POR DEFECTO --- */
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+  transition: color 0.2s;
+}
+a:hover {
+  color: #535bf2;
+}
+
+/* Mejora inputs por defecto si no tienen clases de Tailwind */
+input, select, textarea {
+  outline: none;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: #3b82f6; /* blue-500 */
 }
