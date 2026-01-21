@@ -5,7 +5,8 @@ import {
   Sparkles, Loader2, BookOpen, GraduationCap, 
   CreditCard, SearchX, ChevronRight, MapPin, 
   Phone, AlignLeft, History, X, User, Bot,
-  AlertCircle, CheckCircle, Edit3, ListFilter
+  AlertCircle, CheckCircle, Edit3, ListFilter,
+  ShieldCheck, UserCog // Iconos nuevos para admin
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/GlassCard'; 
 import { supabase } from '@/lib/supabaseClient';
@@ -13,6 +14,7 @@ import { supabase } from '@/lib/supabaseClient';
 // --- CONSTANTES DEL SISTEMA ---
 const SEDES = ['Catamarca', 'Pilar', 'Santiago del Estero', 'San Nicolás'];
 const ESTADOS = ['Sólo preguntó', 'En Proceso', 'Reconocimiento', 'Documentación', 'Inscripto', 'Alumno Regular', 'Deudor'];
+const ROLES = ['admin', 'asesor'];
 
 // --- TIPOS E INTERFACES ---
 interface Career {
@@ -39,6 +41,14 @@ interface Student {
   careers?: { name: string };
   secretaria?: boolean;
   bot_students?: boolean;
+}
+
+interface StaffMember {
+    id: number;
+    email: string;
+    rol: string | null;
+    sede: string | null;
+    created_at: string;
 }
 
 interface SelectedStudentUI {
@@ -119,31 +129,27 @@ const StatusBadge = ({ status }: { status: string }) => {
 // --- PARSER DE HISTORIAL ---
 const parseChatHistory = (rows: any[]) => {
     if (!rows || rows.length === 0) return "No hay historial disponible.";
-
     return rows.map((row) => {
         const msg = row.message;
         if (!msg) return null;
-
         const role = msg.type === 'human' ? '👤 ALUMNO' : '🤖 BOT';
         let content = msg.content || '';
-
         if (msg.type === 'human' && content.includes("Mensaje del paciente en texto:")) {
             content = content.split("Mensaje del paciente en texto:")[1].split("Mensaje del paciente en transcripción")[0].trim();
         }
-
         if (msg.type === 'ai' && content.includes("Agent stopped")) return null;
-
         return `[${role}]: ${content}`;
-    })
-    .filter(Boolean)
-    .join("\n");
+    }).filter(Boolean).join("\n");
 };
 
 // --- COMPONENTE PRINCIPAL ---
 export default function Dashboard() {
   // Estados Generales
+  const [userRole, setUserRole] = useState<string | null>(null); // ROL DEL USUARIO ACTUAL
   const [students, setStudents] = useState<Student[]>([]);
   const [careers, setCareers] = useState<Career[]>([]);
+  const [staffList, setStaffList] = useState<StaffMember[]>([]); // LISTA DE STAFF (ADMIN)
+  
   const [loadingData, setLoadingData] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
@@ -155,10 +161,9 @@ export default function Dashboard() {
   const [isSavingBot, setIsSavingBot] = useState(false);
   const [isGeneratingBotConfig, setIsGeneratingBotConfig] = useState({ welcome: false, away: false });
 
-  // --- FILTROS ---
-  const [activeFilter, setActiveFilter] = useState<number | null>(null); // Carrera
-  const [activeStatusFilter, setActiveStatusFilter] = useState<string | null>(null); // Estado
-  
+  // Filtros
+  const [activeFilter, setActiveFilter] = useState<number | null>(null);
+  const [activeStatusFilter, setActiveStatusFilter] = useState<string | null>(null);
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
   const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   
@@ -172,7 +177,7 @@ export default function Dashboard() {
   const [isSavingNotes, setIsSavingNotes] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
 
-  // Estados Edición
+  // Estados Edición Alumno
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editForm, setEditForm] = useState<Partial<SelectedStudentUI>>({});
 
@@ -197,24 +202,34 @@ export default function Dashboard() {
   // --- EFECTOS ---
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-        if (filterMenuRef.current && !filterMenuRef.current.contains(event.target as Node)) {
-            setIsFilterMenuOpen(false);
-        }
-        if (statusMenuRef.current && !statusMenuRef.current.contains(event.target as Node)) {
-            setIsStatusMenuOpen(false);
-        }
+        if (filterMenuRef.current && !filterMenuRef.current.contains(event.target as Node)) setIsFilterMenuOpen(false);
+        if (statusMenuRef.current && !statusMenuRef.current.contains(event.target as Node)) setIsStatusMenuOpen(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   useEffect(() => { selectedStudentIdRef.current = selectedStudent?.id || null; }, [selectedStudent]);
-  useEffect(() => { fetchCareers(); fetchBotConfig(); }, []);
+  
+  useEffect(() => { 
+      fetchCareers(); 
+      //fetchBotConfig(); // Lo movemos a onDemand para no fallar si no es admin
+  }, []);
   
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => { fetchStudents(); }, 500);
     return () => clearTimeout(delayDebounceFn);
   }, [searchTerm, activeFilter, activeStatusFilter]);
+
+  // Cargar Staff solo si es admin y entra a la pestaña
+  useEffect(() => {
+      if (activeTab === 'staff' && userRole === 'admin') {
+          fetchStaffList();
+      }
+      if (activeTab === 'bot' && userRole === 'admin') {
+          fetchBotConfig();
+      }
+  }, [activeTab, userRole]);
 
   // --- REALTIME OPTIMIZADO ---
   useEffect(() => {
@@ -226,16 +241,12 @@ export default function Dashboard() {
         else if (payload.eventType === 'UPDATE') {
             const updatedStudent = payload.new as Student;
             setStudents(prev => prev.map(s => s.id === updatedStudent.id ? { ...s, ...updatedStudent } : s));
-            
             if (selectedStudentIdRef.current === updatedStudent.id) {
-                if (!isEditingProfile) {
-                    fetchStudentDetails(updatedStudent.id);
-                }
+                if (!isEditingProfile) fetchStudentDetails(updatedStudent.id);
             }
         }
       })
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [isEditingProfile]);
 
@@ -258,7 +269,7 @@ export default function Dashboard() {
         setWelcomeText(data.welcome_message);
         setAwayText(data.away_message);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error("No autorizado para ver bot config o error de red"); }
   };
 
   const fetchStudents = async () => {
@@ -266,7 +277,6 @@ export default function Dashboard() {
     try {
       const headers = await getAuthHeader();
       let url = `${API_URL}/students?search=${encodeURIComponent(searchTerm)}`;
-      
       if (activeFilter) url += `&career_id=${activeFilter}`;
       if (activeStatusFilter) url += `&status=${encodeURIComponent(activeStatusFilter)}`;
 
@@ -274,6 +284,8 @@ export default function Dashboard() {
       if (res.ok) {
         const result = await res.json();
         setStudents(result.data || []);
+        // AQUÍ CAPTURAMOS EL ROL DEL USUARIO
+        if (result.userRole) setUserRole(result.userRole);
       }
     } catch (err) { console.error(err); } finally { setLoadingData(false); }
   };
@@ -286,42 +298,56 @@ export default function Dashboard() {
         const data = await res.json();
         const s = data.student;
         const uiStudent: SelectedStudentUI = {
-          id: s.id,
-          name: s.full_name,
-          dni: s.dni,
-          legajo: s.legajo,
-          phone: s.contact_phone,
-          location: s.location,
-          status: s.status,
-          debt: s.has_debt,
-          notes: s.general_notes,
-          career: s.careers?.name || 'Sin Carrera',
-          careerId: s.career_id,
-          secretaria: s.secretaria,
-          bot_students: s.bot_students
+          id: s.id, name: s.full_name, dni: s.dni, legajo: s.legajo, phone: s.contact_phone,
+          location: s.location, status: s.status, debt: s.has_debt, notes: s.general_notes,
+          career: s.careers?.name || 'Sin Carrera', careerId: s.career_id,
+          secretaria: s.secretaria, bot_students: s.bot_students
         };
         setSelectedStudent(uiStudent);
         setNotesBuffer(uiStudent.notes || '');
         setStudentDocuments(data.documents || []);
         
-        if (!isEditingProfile) {
-            setAnalysisChat([]); 
-            setShowHistory(false);
-        }
+        if (!isEditingProfile) { setAnalysisChat([]); setShowHistory(false); }
       }
     } catch (err) { console.error(err); }
   };
 
-  // --- LÓGICA DE EDICIÓN MANUAL ---
+  const fetchStaffList = async () => {
+    try {
+        const headers = await getAuthHeader();
+        const res = await fetch(`${API_URL}/admin/staff`, { headers });
+        if (res.ok) setStaffList(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
+  // --- ACTIONS ADMIN (STAFF) ---
+  const updateStaffMember = async (id: number, field: 'rol' | 'sede', value: string) => {
+      // Actualización optimista
+      setStaffList(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
+      
+      try {
+          const headers = await getAuthHeader();
+          // Construir payload dinámico
+          const currentStaff = staffList.find(s => s.id === id);
+          const payload = { 
+              rol: field === 'rol' ? value : currentStaff?.rol,
+              sede: field === 'sede' ? value : currentStaff?.sede
+          };
+
+          await fetch(`${API_URL}/admin/staff/${id}`, {
+              method: 'PATCH',
+              headers: { ...headers, 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
+      } catch (e) { alert("Error actualizando staff"); fetchStaffList(); }
+  };
+
+  // --- ACTIONS ESTUDIANTES ---
   const handleEditClick = () => {
       if (!selectedStudent) return;
       setEditForm({
-          name: selectedStudent.name,
-          dni: selectedStudent.dni,
-          legajo: selectedStudent.legajo,
-          location: selectedStudent.location,
-          status: selectedStudent.status,
-          careerId: selectedStudent.careerId
+          name: selectedStudent.name, dni: selectedStudent.dni, legajo: selectedStudent.legajo,
+          location: selectedStudent.location, status: selectedStudent.status, careerId: selectedStudent.careerId
       });
       setIsEditingProfile(true);
   };
@@ -334,38 +360,27 @@ export default function Dashboard() {
               method: 'PATCH',
               headers: { ...headers, 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                  full_name: editForm.name,
-                  dni: editForm.dni,
-                  legajo: editForm.legajo,
-                  career_id: editForm.careerId,
-                  location: editForm.location,
-                  status: editForm.status
+                  full_name: editForm.name, dni: editForm.dni, legajo: editForm.legajo,
+                  career_id: editForm.careerId, location: editForm.location, status: editForm.status
               })
           });
 
           if (res.ok) {
               setIsEditingProfile(false);
               await fetchStudentDetails(selectedStudent.id);
-              alert("Perfil actualizado correctamente");
-          } else {
-              alert("Error al actualizar perfil");
-          }
-      } catch (e) {
-          alert("Error de conexión");
-      }
+              alert("Perfil actualizado");
+          } else { alert("Error al actualizar"); }
+      } catch (e) { alert("Error de conexión"); }
   };
 
-  // --- ACTION HANDLERS ---
+  // --- RESTO DE HANDLERS ---
   const toggleHistoryView = async () => {
     if (!showHistory && selectedStudent?.phone) {
         setLoadingHistory(true);
         try {
             const headers = await getAuthHeader();
             const res = await fetch(`${API_URL}/chat-history/${selectedStudent.phone}`, { headers });
-            if (res.ok) {
-                const data = await res.json();
-                setHistoryData(data);
-            }
+            if (res.ok) setHistoryData(await res.json());
         } catch (err) { console.error(err); } finally { setLoadingHistory(false); }
     }
     setShowHistory(!showHistory);
@@ -376,13 +391,9 @@ export default function Dashboard() {
       setIsResolving(true);
       try {
           const headers = await getAuthHeader();
-          const res = await fetch(`${API_URL}/students/${selectedStudent.id}/resolve`, {
-              method: 'PATCH',
-              headers: { ...headers }
-          });
-          if (res.ok) {
-              setSelectedStudent(prev => prev ? ({ ...prev, secretaria: false, bot_students: true }) : null);
-          } else { alert("Error al resolver."); }
+          const res = await fetch(`${API_URL}/students/${selectedStudent.id}/resolve`, { method: 'PATCH', headers });
+          if (res.ok) setSelectedStudent(prev => prev ? ({ ...prev, secretaria: false, bot_students: true }) : null);
+          else alert("Error al resolver.");
       } catch (err) { alert("Error de conexión"); } finally { setIsResolving(false); }
   };
 
@@ -434,14 +445,12 @@ export default function Dashboard() {
       if (!res.ok) throw new Error();
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = fileName;
+      const a = document.createElement('a'); a.href = url; a.download = fileName;
       document.body.appendChild(a); a.click();
       window.URL.revokeObjectURL(url); document.body.removeChild(a);
     } catch (err) { alert("Error en descarga"); }
   };
 
-  // --- LOGICA IA ---
   const startAnalysis = async () => {
     if (!selectedStudent) return;
     setIsAnalyzing(true);
@@ -449,7 +458,6 @@ export default function Dashboard() {
         const headers = await getAuthHeader();
         const res = await fetch(`${API_URL}/chat-history/${selectedStudent.phone}`, { headers });
         let chatContextText = res.ok ? parseChatHistory(await res.json()) : "(Sin historial)";
-        
         const systemPrompt = selectedStudent.secretaria 
             ? `El alumno solicitó hablar con secretaria. Resume la conversación y explica qué necesita urgentemente.`
             : `Eres un experto analista académico. Misión: analizar la conversación y perfil del alumno.`;
@@ -481,29 +489,17 @@ export default function Dashboard() {
 
   // --- RENDER UI ---
   const handleOpenStudentModal = async (studentPreview: Student) => { 
-      setSelectedCareer(null); 
-      setIsEditingProfile(false); 
-      setIsModalVisible(true); 
-      setTimeout(() => setIsModalOpen(true), 10); 
-      await fetchStudentDetails(studentPreview.id); 
+      setSelectedCareer(null); setIsEditingProfile(false); setIsModalVisible(true); 
+      setTimeout(() => setIsModalOpen(true), 10); await fetchStudentDetails(studentPreview.id); 
   };
   
   const handleCloseModal = () => { 
       setIsModalOpen(false); 
-      setTimeout(() => { 
-          setIsModalVisible(false); 
-          setSelectedStudent(null); 
-          setSelectedCareer(null); 
-          setShowHistory(false); 
-          setIsEditingProfile(false); 
-      }, 300); 
+      setTimeout(() => { setIsModalVisible(false); setSelectedStudent(null); setSelectedCareer(null); setShowHistory(false); setIsEditingProfile(false); }, 300); 
   };
   
   const handleOpenCareerModal = (c: Career) => { 
-      setSelectedStudent(null); 
-      setSelectedCareer(c); 
-      setIsModalVisible(true); 
-      setTimeout(() => setIsModalOpen(true), 10); 
+      setSelectedStudent(null); setSelectedCareer(c); setIsModalVisible(true); setTimeout(() => setIsModalOpen(true), 10); 
   };
   
   const filteredCareers = careers.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -520,28 +516,37 @@ export default function Dashboard() {
           <p className="text-slate-400 text-xs font-medium uppercase tracking-[0.2em] mt-1">Gestión académica • Automatización IA</p>
         </div>
         <div className="flex bg-slate-900/80 backdrop-blur-md p-1 rounded-xl border border-slate-700/50 shadow-2xl">
-          {['dashboard', 'careers', 'bot'].map((tab) => (
+          {['dashboard', 'careers'].map((tab) => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold transition-all duration-300 ${activeTab === tab ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] scale-105' : 'text-slate-400 hover:text-slate-200'}`}>
-              {tab === 'dashboard' && <Users size={14}/>} {tab === 'careers' && <BookOpen size={14}/>} {tab === 'bot' && <MessageCircle size={14}/>}
-              <span className="uppercase tracking-widest">{tab === 'dashboard' ? 'Alumnos' : tab === 'careers' ? 'Carreras' : 'Bot AI'}</span>
+              {tab === 'dashboard' && <Users size={14}/>} {tab === 'careers' && <BookOpen size={14}/>}
+              <span className="uppercase tracking-widest">{tab === 'dashboard' ? 'Alumnos' : 'Carreras'}</span>
             </button>
           ))}
+          {/* PESTAÑA BOT (SOLO ADMIN) */}
+          {userRole === 'admin' && (
+             <button onClick={() => setActiveTab('bot')} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold transition-all duration-300 ${activeTab === 'bot' ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] scale-105' : 'text-slate-400 hover:text-slate-200'}`}>
+                <MessageCircle size={14} /> <span className="uppercase tracking-widest">Bot AI</span>
+             </button>
+          )}
+          {/* PESTAÑA EQUIPO (SOLO ADMIN) */}
+          {userRole === 'admin' && (
+             <button onClick={() => setActiveTab('staff')} className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold transition-all duration-300 ${activeTab === 'staff' ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] scale-105' : 'text-slate-400 hover:text-slate-200'}`}>
+                <UserCog size={14} /> <span className="uppercase tracking-widest">Equipo</span>
+             </button>
+          )}
         </div>
       </div>
 
       {/* DASHBOARD TAB */}
       {activeTab === 'dashboard' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-700">
-          
           <div className="flex flex-col md:flex-row gap-4 items-center justify-between relative z-30">
             <div className="relative flex-1 w-full md:max-w-xl group">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors" size={18} />
               <input type="text" placeholder="Buscar por nombre, DNI o Legajo..." className="w-full pl-12 pr-4 py-3 bg-slate-900/40 border border-slate-700/50 rounded-2xl text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 text-sm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             </div>
             
-            {/* AREA DE FILTROS */}
             <div className="flex gap-3 relative w-full md:w-auto">
-              
               {/* FILTRO ESTADO */}
               <div className="relative" ref={statusMenuRef}>
                 <button onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)} className={`flex items-center justify-center gap-3 px-6 py-3 border rounded-2xl font-bold text-xs uppercase tracking-widest transition-all ${isStatusMenuOpen || activeStatusFilter ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-slate-900/40 border-slate-700/50 text-slate-300 hover:bg-slate-800'}`}>
@@ -556,7 +561,6 @@ export default function Dashboard() {
                     </div>
                 )}
               </div>
-
               {/* FILTRO CARRERA */}
               <div className="relative" ref={filterMenuRef}>
                 <button onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)} className={`flex items-center justify-center gap-3 px-6 py-3 border rounded-2xl font-bold text-xs uppercase tracking-widest transition-all ${isFilterMenuOpen || activeFilter ? 'bg-blue-600 border-blue-500 text-white shadow-lg' : 'bg-slate-900/40 border-slate-700/50 text-slate-300 hover:bg-slate-800'}`}>
@@ -571,7 +575,6 @@ export default function Dashboard() {
                     </div>
                 )}
               </div>
-
             </div>
           </div>
 
@@ -625,7 +628,57 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* VISTAS CARRERAS Y BOT */}
+      {/* --- PESTAÑA DE EQUIPO (SOLO ADMIN) --- */}
+      {activeTab === 'staff' && userRole === 'admin' && (
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-700">
+              <GlassCard className="p-8 border-slate-700/50 shadow-2xl">
+                  <h3 className="font-black text-white border-b border-slate-800 pb-4 flex items-center gap-3 text-sm uppercase tracking-[0.2em] mb-6">
+                      <ShieldCheck size={20} className="text-green-500" /> Gestión de Acceso
+                  </h3>
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-left">
+                          <thead>
+                              <tr className="text-[10px] font-black uppercase tracking-widest text-slate-500 border-b border-slate-800">
+                                  <th className="py-4">Usuario</th>
+                                  <th className="py-4">Rol</th>
+                                  <th className="py-4">Sede Asignada</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800">
+                              {staffList.map((staff) => (
+                                  <tr key={staff.id} className="group">
+                                      <td className="py-4 text-sm font-bold text-slate-300">{staff.email}</td>
+                                      <td className="py-4">
+                                          <select 
+                                              className="bg-slate-950 border border-slate-700 rounded-lg text-xs text-white p-2 focus:border-blue-500 transition-colors"
+                                              value={staff.rol || ''}
+                                              onChange={(e) => updateStaffMember(staff.id, 'rol', e.target.value)}
+                                          >
+                                              <option value="" disabled>Sin Rol (Pendiente)</option>
+                                              <option value="admin">Administrador Total</option>
+                                              <option value="asesor">Asesora de Sede</option>
+                                          </select>
+                                      </td>
+                                      <td className="py-4">
+                                          <select 
+                                              className="bg-slate-950 border border-slate-700 rounded-lg text-xs text-white p-2 focus:border-blue-500 transition-colors"
+                                              value={staff.sede || ''}
+                                              onChange={(e) => updateStaffMember(staff.id, 'sede', e.target.value)}
+                                          >
+                                              <option value="" disabled>Sin Sede</option>
+                                              {SEDES.map(s => <option key={s} value={s}>{s}</option>)}
+                                          </select>
+                                      </td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                  </div>
+              </GlassCard>
+          </div>
+      )}
+
+      {/* --- PESTAÑA CARRERAS --- */}
       {activeTab === 'careers' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-2">
            {filteredCareers.map((career) => (
@@ -648,7 +701,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {activeTab === 'bot' && (
+      {/* --- PESTAÑA BOT (SOLO ADMIN) --- */}
+      {activeTab === 'bot' && userRole === 'admin' && (
         <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2">
           <GlassCard className="p-8 flex items-center justify-between border-slate-700/50 shadow-2xl">
             <div><h2 className="text-xl font-black text-white uppercase tracking-tighter">Status Operativo</h2><p className="text-xs text-slate-500 uppercase tracking-widest mt-1">El asistente responderá automáticamente vía WhatsApp.</p></div>
@@ -677,7 +731,7 @@ export default function Dashboard() {
             
             <button onClick={handleCloseModal} className="absolute top-6 right-6 p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white transition-all z-50"><X size={24} /></button>
 
-            {/* --- PANEL IZQUIERDO: HISTORIAL (Solo visible si showHistory = true) --- */}
+            {/* --- PANEL IZQUIERDO: HISTORIAL --- */}
             {showHistory && (
                   <div className="h-full w-2/3 flex flex-col bg-slate-950/50 border-r border-slate-800 animate-in fade-in slide-in-from-right-10 duration-500">
                       <div className="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm z-10 flex justify-between items-center">
@@ -697,7 +751,6 @@ export default function Dashboard() {
                               historyData.map((row, idx) => {
                                   const msg = row.message;
                                   if (!msg) return null;
-                                  
                                   const isHuman = msg.type === 'human';
                                   let content = msg.content || '';
                                   if (isHuman && content.includes("Mensaje del paciente en texto:")) content = content.split("Mensaje del paciente en texto:")[1].split("Mensaje del paciente en transcripción")[0].trim();
@@ -719,7 +772,7 @@ export default function Dashboard() {
                   </div>
             )}
 
-            {/* --- PANEL DERECHO: FICHA ALUMNO / DETALLE CARRERA (Siempre visible) --- */}
+            {/* --- PANEL DERECHO --- */}
             <div className={`h-full overflow-y-auto custom-scrollbar p-10 flex-shrink-0 transition-all duration-500 ${showHistory ? 'w-1/3 bg-slate-900' : 'w-full'}`}>
             
             {/* VISTA DETALLE ALUMNO */}
@@ -730,7 +783,6 @@ export default function Dashboard() {
                 {isEditingProfile ? (
                     <div className="bg-slate-800/50 p-6 rounded-3xl border border-slate-700 space-y-4">
                         <h3 className="text-white font-bold flex items-center gap-2"><Edit3 size={18}/> Editar Perfil</h3>
-                        
                         <div className="space-y-2">
                             <label className="text-[10px] uppercase text-slate-500 font-bold">Nombre Completo</label>
                             <input className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
@@ -763,7 +815,6 @@ export default function Dashboard() {
                                 {ESTADOS.map(st => <option key={st} value={st}>{st}</option>)}
                             </select>
                         </div>
-
                         <div className="flex gap-2 pt-2">
                             <button onClick={() => setIsEditingProfile(false)} className="flex-1 py-2 bg-slate-700 text-white rounded-xl text-xs font-bold hover:bg-slate-600">Cancelar</button>
                             <button onClick={handleSaveProfile} className="flex-1 py-2 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-500">Guardar Cambios</button>
@@ -772,16 +823,12 @@ export default function Dashboard() {
                 ) : (
                     // --- VISTA NORMAL ---
                     <div className="text-center relative group-header">
-                        {/* Botón Editar Flotante - MOVIDO A LA IZQUIERDA (left-0) */}
                         <button onClick={handleEditClick} className="absolute top-0 left-0 p-2 bg-slate-800 text-slate-400 rounded-full hover:bg-blue-600 hover:text-white transition-all" title="Editar Perfil Manualmente">
                             <Edit3 size={16} />
                         </button>
-
                         <div className="h-28 w-28 mx-auto rounded-[2.5rem] bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white text-4xl font-black mb-6 shadow-2xl border-4 border-slate-900 ring-1 ring-slate-800">{selectedStudent.name.charAt(0)}</div>
                         {selectedStudent.secretaria && (<div className="mt-4 bg-red-500/10 border border-red-500/50 p-4 rounded-2xl flex flex-col items-center gap-2 animate-pulse"><div className="flex items-center gap-2 text-red-400 font-black uppercase tracking-widest text-xs"><AlertCircle size={16} /> Requiere Asistencia</div><p className="text-xs text-red-200 text-center">El alumno solicitó hablar con un humano.</p></div>)}
-                        
                         <h2 className="text-3xl font-black text-white tracking-tighter uppercase mt-4">{selectedStudent.name}</h2>
-                        
                         <div className="flex flex-col items-center gap-2 mt-3">
                             <p className="text-blue-400 font-bold text-sm tracking-tight">{selectedStudent.career}</p>
                             {selectedStudent.legajo && <span className="text-[10px] font-mono text-slate-500 bg-slate-800 px-3 py-1 rounded-full border border-slate-700 uppercase">Legajo #{selectedStudent.legajo}</span>}
