@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { createClient } from '@supabase/supabase-js';
 
 // Leemos las variables de entorno de Vite
@@ -12,10 +13,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
 // Creamos y exportamos la instancia del cliente
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    persistSession: true, // Mantiene al usuario logueado aunque recargue
-    autoRefreshToken: true,
+    // 1. Mantiene al usuario logueado en el navegador
+    persistSession: true,   
+    
+    // 2. Renueva el token automáticamente antes de que expire
+    autoRefreshToken: true, 
+    
+    // 3. ¡CRÍTICO! Detecta el hash (#access_token=...) que envía Google al volver
+    // Sin esto, la web ignora el login exitoso y da el error 401
+    detectSessionInUrl: true 
   },
-  // Configuración para Realtime (importante para tu chat y actualizaciones)
+  // Mantenemos tu configuración de Realtime (útil para el chat)
   realtime: {
     params: {
       eventsPerSecond: 10,
