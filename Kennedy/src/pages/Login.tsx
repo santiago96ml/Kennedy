@@ -2,191 +2,136 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabaseClient';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { Loader2, ShieldAlert, LogOut, CheckCircle2 } from 'lucide-react';
+import { Loader2, ShieldAlert, LogIn, UserPlus, Mail, Lock, Building, User } from 'lucide-react';
+
+// ✅ CORRECCIÓN URL: Usamos la raíz del servidor, sin '/api' extra al final si ya lo tiene.
+// Si tu backend corre en localhost:4001, la base es esa.
+const BACKEND_URL = 'http://localhost:4001'; 
 
 export default function Login() {
   const navigate = useNavigate();
+  const [isLoginMode, setIsLoginMode] = useState(true);
   const [loading, setLoading] = useState(false);
-  // Iniciamos en 'checking' para dar tiempo a que Supabase procese el token de la URL
-  const [status, setStatus] = useState<'idle' | 'checking' | 'pending_approval'>('checking');
-  const [userEmail, setUserEmail] = useState('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Campos Formulario
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [sede, setSede] = useState('Catamarca');
+
+  // 1. LISTENER DE GOOGLE (Automático)
   useEffect(() => {
-    console.log("🔄 [LOGIN] Iniciando listener de autenticación...");
-
-    // 1. ESCUCHA ACTIVA: Esto se dispara automáticamente cuando Supabase procesa el login de Google
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log(`📣 [AUTH EVENT] Evento recibido: ${event}`);
-      
-      if (session) {
-        console.log("✅ [AUTH] Sesión detectada:", {
-            email: session.user.email,
-            id: session.user.id,
-            expires_at: session.expires_at
-        });
-      } else {
-        console.log("❌ [AUTH] No hay sesión activa en este evento.");
-      }
-
-      if (session?.user?.email) {
-        // ¡Login exitoso detectado! Verificamos rol.
-        console.log("🚀 [FLOW] Iniciando verificación de staff...");
-        await verifyStaffAccess(session.user.email);
-      } else {
-        // No hay sesión, mostramos el login
-        console.log("⏸️ [FLOW] Estado establecido a IDLE (Esperando login)");
-        setStatus('idle');
-      }
+        if (event === 'SIGNED_IN' && session) {
+            console.log("🌍 [GOOGLE] Sesión detectada. Sincronizando con Backend...");
+            await syncGoogleUserWithBackend(session);
+        }
     });
-
-    // Limpieza al desmontar
-    return () => {
-        console.log("🧹 [LOGIN] Limpiando listener...");
-        subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
-  // 2. Lógica de Seguridad (Sin cambios mayores, solo robustez)
-  const verifyStaffAccess = async (email: string) => {
-    console.log(`🔎 [DB CHECK] Buscando usuario en 'perfil_staff' con email: ${email}`);
-    setStatus('checking');
-    setUserEmail(email);
+  // Función para validar usuario Google contra tu Backend
+  const syncGoogleUserWithBackend = async (session: any) => {
+      setLoading(true);
+      try {
+          const response = await fetch(`${BACKEND_URL}/api/auth/google-sync`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  email: session.user.email,
+                  uuid: session.user.id 
+              })
+          });
+
+          if (!response.ok) throw new Error("Error sincronizando perfil");
+          
+          const data = await response.json();
+          
+          // Guardamos datos y entramos
+          localStorage.setItem('sb-token', session.access_token);
+          localStorage.setItem('user-data', JSON.stringify(data.user));
+          
+          console.log("✅ [GOOGLE] Acceso concedido:", data.user);
+          navigate('/dashboard');
+
+      } catch (err) {
+          console.error(err);
+          setErrorMsg("Error al validar tu cuenta de Google en el sistema.");
+          await supabase.auth.signOut(); // Sacarlo si falló la validación
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  // 2. LOGIN CON EMAIL (Manual)
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg(null);
+
+    // ✅ CORRECCIÓN URL: Aquí construimos la ruta manualmente para evitar dobles /api
+    const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
+    const fullUrl = `${BACKEND_URL}${endpoint}`;
     
     try {
-      const { data: staff, error } = await supabase
-        .from('perfil_staff')
-        .select('*')
-        .eq('email', email)
-        .single();
+      console.log(`📡 [AUTH] Enviando a: ${fullUrl}`);
 
-      if (error) {
-        console.error("⚠️ [DB ERROR] Respuesta de Supabase:", error);
-        
-        // Si el error NO es que no encontró resultados (PGRST116), es un error real
-        if (error.code !== 'PGRST116') {
-            setStatus('idle'); // En error, volvemos al login para reintentar
-            return; 
-        }
-        console.log("ℹ️ [DB] El usuario no existe en la tabla (Error PGRST116 esperado para nuevos)");
+      const bodyData: any = { email, password };
+      if (!isLoginMode) {
+        bodyData.nombre = nombre;
+        bodyData.sede = sede;
+      }
+
+      const response = await fetch(fullUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData)
+      });
+
+      // Chequeo antes de parsear JSON para evitar el error "<"
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("El servidor no devolvió JSON (Posible error 404 o 500 html)");
+      }
+
+      const data = await response.json();
+
+      if (!response.ok) throw new Error(data.error || 'Error de conexión');
+
+      if (isLoginMode) {
+        localStorage.setItem('sb-token', data.token);
+        localStorage.setItem('user-data', JSON.stringify(data.user));
+        navigate('/dashboard');
       } else {
-        console.log("✅ [DB] Usuario encontrado:", staff);
+        alert("¡Registro exitoso! Ahora inicia sesión.");
+        setIsLoginMode(true);
       }
 
-      // Caso: Usuario Nuevo
-      if (!staff) {
-        console.log("🆕 [REGISTRO] Usuario nuevo detectado. Intentando auto-registro...");
-        const { error: insertError } = await supabase.from('perfil_staff').insert([{ email, rol: null, sede: null }]);
-        
-        if (insertError) {
-            console.error("❌ [REGISTRO FALLIDO] Error al crear usuario:", insertError);
-        } else {
-            console.log("✅ [REGISTRO EXITOSO] Usuario creado sin rol.");
-        }
-        
-        setStatus('pending_approval');
-        return;
-      }
-
-      // Caso: Usuario sin rol
-      if (!staff.rol) {
-        console.log("⛔ [ACCESO DENEGADO] El usuario existe pero no tiene ROL asignado.");
-        setStatus('pending_approval');
-        return;
-      }
-
-      // Caso: Acceso concedido
-      console.log(`🎉 [ACCESO CONCEDIDO] Bienvenido ${email}. Redirigiendo al Dashboard...`);
-      navigate('/');
-      
-    } catch (err) {
-      console.error("💥 [CRITICAL ERROR] Excepción no controlada:", err);
-      setStatus('idle');
+    } catch (err: any) {
+      console.error("❌ [AUTH ERROR]", err);
+      setErrorMsg(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleGoogleLogin = async () => {
-    console.log("👆 [CLICK] Botón de Login presionado.");
-    setLoading(true);
-    
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { 
-        redirectTo: window.location.origin 
+  // 3. LOGIN CON GOOGLE (Botón)
+  const handleGoogleClick = async () => {
+      setLoading(true);
+      const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo: window.location.origin }
+      });
+      if (error) {
+          setErrorMsg(error.message);
+          setLoading(false);
       }
-    });
-
-    if (error) {
-        console.error("❌ [OAUTH ERROR] Falló el inicio con Google:", error.message);
-        alert("Error: " + error.message);
-        setLoading(false);
-    } else {
-        console.log("✈️ [OAUTH] Redirigiendo a Google...");
-    }
   };
-
-  const handleSignOut = async () => {
-    console.log("👋 [LOGOUT] Cerrando sesión...");
-    await supabase.auth.signOut();
-    setStatus('idle');
-    setUserEmail('');
-    console.log("🔄 [RELOAD] Recargando página para limpiar estado...");
-    window.location.reload(); // Recarga forzada para limpiar caché
-  };
-
-  // --- RENDERIZADO (Igual que antes) ---
-
-  if (status === 'checking' || loading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-4 animate-pulse">
-            <div className="h-16 w-16 bg-blue-600/20 rounded-full flex items-center justify-center border border-blue-500/50">
-                <Loader2 className="h-8 w-8 text-blue-400 animate-spin" />
-            </div>
-            <p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Validando Credenciales...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (status === 'pending_approval') {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden animate-enter">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-[100px] pointer-events-none"></div>
-        <GlassCard className="max-w-md w-full p-8 border-yellow-500/30 text-center relative z-10">
-          <div className="mx-auto h-20 w-20 bg-yellow-500/10 rounded-full flex items-center justify-center mb-6 border border-yellow-500/20 shadow-[0_0_30px_rgba(234,179,8,0.1)]">
-            <ShieldAlert className="h-10 w-10 text-yellow-500" />
-          </div>
-          <h2 className="text-2xl font-black text-white mb-2 tracking-tight">Solicitud en Revisión</h2>
-          <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-            La cuenta <span className="text-white font-bold">{userEmail}</span> ha sido registrada.
-          </p>
-          <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800 mb-8 text-left">
-            <div className="flex items-start gap-3">
-                <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5 shrink-0" />
-                <div>
-                    <p className="text-xs font-bold text-slate-300 uppercase mb-1">Identidad Verificada</p>
-                    <p className="text-xs text-slate-500">Google ha confirmado tu identidad.</p>
-                </div>
-            </div>
-            <div className="w-px h-6 bg-slate-800 ml-2.5 my-1"></div>
-             <div className="flex items-start gap-3 opacity-80">
-                <Loader2 className="h-5 w-5 text-yellow-500 mt-0.5 shrink-0 animate-spin" />
-                <div>
-                    <p className="text-xs font-bold text-slate-300 uppercase mb-1">Esperando Permisos</p>
-                    <p className="text-xs text-slate-500">Un administrador debe asignarte un ROL.</p>
-                </div>
-            </div>
-          </div>
-          <button onClick={handleSignOut} className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-slate-700">
-            <LogOut size={16} /> Cancelar / Cerrar Sesión
-          </button>
-        </GlassCard>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen w-full bg-slate-950 flex relative overflow-hidden animate-enter">
+      {/* Lado Izquierdo (Decorativo) */}
       <div className="hidden lg:flex w-1/2 relative items-center justify-center p-12">
          <div className="absolute inset-0 bg-blue-600/5 z-0"></div>
          <div className="absolute top-1/3 left-1/3 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-[120px] animate-pulse"></div>
@@ -195,27 +140,77 @@ export default function Login() {
               KENNEDY<span className="text-blue-500">SYSTEM</span>
             </h1>
             <p className="text-xl text-slate-400 font-medium leading-relaxed">
-              Gestión académica inteligente y automatización para sedes VINTEX.
+              Gestión académica inteligente y automatización.
             </p>
          </div>
       </div>
+
+      {/* Lado Derecho (Formulario) */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 bg-slate-950 lg:bg-slate-900/30 lg:backdrop-blur-sm border-l border-slate-800">
-        <GlassCard className="w-full max-w-md p-12 border-slate-800 shadow-2xl">
-            <div className="text-center mb-12">
-                <div className="h-20 w-20 mx-auto bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-900/20">
-                    <span className="text-4xl font-black text-white italic">K</span>
+        <GlassCard className="w-full max-w-md p-10 border-slate-800 shadow-2xl">
+            
+            <div className="text-center mb-8">
+                <div className="h-16 w-16 mx-auto bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-blue-900/20">
+                    <span className="text-3xl font-black text-white italic">K</span>
                 </div>
-                <h2 className="text-3xl font-bold text-white mb-3">Acceso Staff</h2>
-                <p className="text-slate-500 text-sm">Utiliza tu cuenta institucional Google.</p>
+                <h2 className="text-2xl font-bold text-white mb-2">
+                  {isLoginMode ? 'Bienvenido al Staff' : 'Crear Cuenta'}
+                </h2>
             </div>
-            <button onClick={handleGoogleLogin} disabled={loading} className="w-full py-4 bg-white hover:bg-slate-200 text-slate-900 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-4 shadow-xl active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed group">
-                <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-6 h-6 group-hover:scale-110 transition-transform" />
-                {loading ? 'Redirigiendo...' : 'Iniciar con Google'}
+
+            {errorMsg && (
+              <div className="mb-6 p-3 bg-red-500/10 border border-red-500/50 rounded-xl flex items-center gap-3 text-red-400 text-xs font-bold animate-pulse">
+                <ShieldAlert size={16} /> {errorMsg}
+              </div>
+            )}
+
+            {/* --- BOTÓN GOOGLE --- */}
+            <button onClick={handleGoogleClick} disabled={loading} className="w-full py-3 bg-white hover:bg-slate-200 text-slate-900 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-3 shadow-lg active:scale-95 disabled:opacity-50 mb-6">
+                <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-5 h-5" />
+                Continuar con Google
             </button>
-            <div className="mt-12 text-center">
-                <p className="text-[10px] text-slate-600 uppercase tracking-widest font-semibold flex items-center justify-center gap-2">
-                    <ShieldAlert size={12}/> Acceso restringido - Vintex AI
-                </p>
+
+            <div className="flex items-center gap-4 mb-6">
+                <div className="h-px bg-slate-800 flex-1"></div>
+                <span className="text-slate-600 text-[10px] font-bold uppercase">O con Email</span>
+                <div className="h-px bg-slate-800 flex-1"></div>
+            </div>
+
+            {/* --- FORMULARIO EMAIL --- */}
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+                {!isLoginMode && (
+                  <div className="relative group">
+                    <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                    <input type="text" placeholder="Nombre" className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500 transition-all" value={nombre} onChange={(e) => setNombre(e.target.value)} required={!isLoginMode} />
+                  </div>
+                )}
+                <div className="relative group">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                  <input type="email" placeholder="Correo" className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500 transition-all" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                </div>
+                <div className="relative group">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                  <input type="password" placeholder="Contraseña" className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500 transition-all" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                </div>
+                {!isLoginMode && (
+                  <div className="relative group">
+                    <Building className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                    <select className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500" value={sede} onChange={(e) => setSede(e.target.value)}>
+                      <option value="Catamarca">Catamarca</option>
+                      <option value="Santiago">Santiago</option>
+                    </select>
+                  </div>
+                )}
+
+                <button type="submit" disabled={loading} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all shadow-lg active:scale-95 disabled:opacity-50">
+                  {loading ? <Loader2 className="animate-spin mx-auto"/> : (isLoginMode ? 'INGRESAR' : 'REGISTRARSE')}
+                </button>
+            </form>
+
+            <div className="mt-6 text-center">
+                <button onClick={() => { setIsLoginMode(!isLoginMode); setErrorMsg(null); }} className="text-xs text-slate-500 hover:text-blue-400 font-medium">
+                  {isLoginMode ? "¿No tienes cuenta? Regístrate" : "Volver al Login"}
+                </button>
             </div>
         </GlassCard>
       </div>
