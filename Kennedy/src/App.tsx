@@ -4,40 +4,31 @@ import Dashboard from './pages/Dashboard';
 import { MainLayout } from './components/layout/MainLayout';
 import { useEffect, useState } from 'react';
 import { supabase } from './lib/supabaseClient';
-import { Session } from '@supabase/supabase-js'; // Importamos el tipo correcto para TypeScript
+import { Session } from '@supabase/supabase-js'; 
 import './App.css';
 
-// --- CÓDIGO DE LIMPIEZA DE EMERGENCIA ---
-// Este bloque se ejecuta antes de que React cargue la aplicación.
-// Si NO hay un hash en la URL (significa que no estamos volviendo de Google), limpiamos todo.
-if (!window.location.hash) { 
-  console.log("🧹 Limpieza nuclear de sesiones viejas activada.");
-  localStorage.removeItem('sb-iljpmweuterernqyxvdk-auth-token'); // Borra solo el token de Supabase
-  // localStorage.clear(); // Descomenta esto si lo anterior no basta, pero borrará todo.
-}
-// ----------------------------------------
-
+// Componente para proteger rutas (Solo permite acceso si hay sesión)
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Obtenemos la sesión actual inicial
+    // 1. Verificar sesión actual al cargar
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
 
-    // 2. Nos suscribimos a cambios (login, logout, token refresh)
+    // 2. Escuchar cambios en la autenticación (Login, Logout, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setLoading(false); // Aseguramos dejar de cargar si el evento llega rápido
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Pantalla de carga mientras verificamos
+  // Pantalla de carga mientras se verifica el usuario
   if (loading) {
     return (
       <div className="h-screen bg-slate-950 flex items-center justify-center">
@@ -48,12 +39,12 @@ const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
     );
   }
   
-  // Si no hay sesión, redirigir al login
+  // Si terminó de cargar y NO hay sesión, mandar al Login
   if (!session) {
     return <Navigate to="/login" replace />;
   }
 
-  // Si hay sesión, mostrar el contenido
+  // Si hay sesión, mostrar la app
   return children;
 };
 
@@ -61,10 +52,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Ruta Pública */}
+        {/* Ruta Pública: Login */}
         <Route path="/login" element={<Login />} />
 
-        {/* Ruta Privada */}
+        {/* Ruta Privada: Dashboard y resto de la app */}
         <Route path="/" element={
           <ProtectedRoute>
             <MainLayout>
@@ -73,7 +64,7 @@ export default function App() {
           </ProtectedRoute>
         } />
 
-        {/* Redirección por defecto */}
+        {/* Cualquier ruta desconocida redirige al inicio */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
