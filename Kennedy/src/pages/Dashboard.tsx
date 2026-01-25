@@ -72,7 +72,8 @@ interface ChatMessage {
 }
 
 // --- CONFIGURACIÓN ---
-const API_URL = import.meta.env.VITE_KENNEDY_API_URL || 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host/api';
+// CORRECCIÓN APLICADA AQUÍ: (import.meta as any) para evitar el error de TS
+const API_URL = (import.meta as any).env.VITE_KENNEDY_API_URL || 'http://localhost:4001/api';
 
 const getAuthHeader = async (): Promise<Record<string, string>> => {
   const { data: { session } } = await supabase.auth.getSession();
