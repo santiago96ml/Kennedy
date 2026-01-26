@@ -74,6 +74,7 @@ export default function Dashboard() {
     return () => clearInterval(intervalId);
   }, [activeTab, selectedStudent]);
 
+  
   useEffect(() => {
     if (activeTab === 'chat') scrollToBottom();
   }, [chatHistory, activeTab]);
