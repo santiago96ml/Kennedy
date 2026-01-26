@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Loader2, ShieldAlert, Mail, Lock, Building, User } from 'lucide-react';
 
+// URL del Backend
 const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
 
 export default function Login() {
@@ -12,14 +13,14 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Campos Formulario
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nombre, setNombre] = useState('');
   const [sede, setSede] = useState('Catamarca');
 
-  // 1. LISTENER DE GOOGLE (Ahora sí se ejecutará al volver)
+  // 1. LISTENER DE GOOGLE (Automático)
   useEffect(() => {
-    // Escuchar el evento de inicio de sesión
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_IN' && session) {
             console.log("🌍 [GOOGLE] Sesión detectada. Sincronizando con Backend...");
@@ -29,8 +30,9 @@ export default function Login() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Función para validar usuario Google contra tu Backend
   const syncGoogleUserWithBackend = async (session: any) => {
-      // Evitamos doble carga si ya estamos redirigiendo
+      // ✅ MEJORA: Evitamos doble carga si el token ya coincide (lógica de la v2)
       if (localStorage.getItem('sb-token') === session.access_token) {
           navigate('/dashboard');
           return;
@@ -51,39 +53,57 @@ export default function Login() {
           
           const data = await response.json();
           
+          // Guardamos datos
           localStorage.setItem('sb-token', session.access_token);
           localStorage.setItem('user-data', JSON.stringify(data.user));
           
           console.log("✅ [GOOGLE] Sincronización exitosa.");
-          // Forzamos navegación directa para asegurar recarga de estado
+          
+          // ✅ MEJORA: Forzamos navegación directa para asegurar recarga de estado (lógica de la v2)
           window.location.href = '/dashboard'; 
 
       } catch (err) {
           console.error(err);
-          setErrorMsg("Error al validar tu cuenta con el servidor.");
+          setErrorMsg("Error al validar tu cuenta de Google en el sistema.");
           await supabase.auth.signOut(); 
       } finally {
           setLoading(false);
       }
   };
 
-  // ... (El código de handleEmailAuth se mantiene igual que antes) ...
+  // 2. LOGIN CON EMAIL (Manual)
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg(null);
+
     const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
     const fullUrl = `${BACKEND_URL}${endpoint}`;
+    
     try {
+      console.log(`📡 [AUTH] Enviando a: ${fullUrl}`);
+
       const bodyData: any = { email, password };
-      if (!isLoginMode) { bodyData.nombre = nombre; bodyData.sede = sede; }
+      if (!isLoginMode) {
+        bodyData.nombre = nombre;
+        bodyData.sede = sede;
+      }
+
       const response = await fetch(fullUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData)
       });
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("El servidor no devolvió JSON (Posible error 404 o 500 html)");
+      }
+
       const data = await response.json();
+
       if (!response.ok) throw new Error(data.error || 'Error de conexión');
+
       if (isLoginMode) {
         localStorage.setItem('sb-token', data.token);
         localStorage.setItem('user-data', JSON.stringify(data.user));
@@ -92,23 +112,27 @@ export default function Login() {
         alert("¡Registro exitoso! Ahora inicia sesión.");
         setIsLoginMode(true);
       }
+
     } catch (err: any) {
+      console.error("❌ [AUTH ERROR]", err);
       setErrorMsg(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // 3. LOGIN CON GOOGLE (CORREGIDO)
+  // 3. LOGIN CON GOOGLE (Botón)
   const handleGoogleClick = async () => {
       setLoading(true);
-      // 🔥 IMPORTANTE: Forzamos el regreso a /login para que este componente procese el sync
-      const redirectUrl = `${window.location.origin}/login`; 
       
+      // ✅ MEJORA: Redirección explícita a /login para procesar el sync al volver (lógica de la v2)
+      const redirectUrl = `${window.location.origin}/login`;
+
       const { error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: { 
             redirectTo: redirectUrl,
+            // ✅ MEJORA: Parámetros extra para asegurar refresh tokens y consentimiento
             queryParams: {
               access_type: 'offline',
               prompt: 'consent',
@@ -123,7 +147,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen w-full bg-slate-950 flex relative overflow-hidden animate-enter">
-      {/* ... (Todo tu JSX visual se mantiene exactamente igual) ... */}
+      {/* Lado Izquierdo (Decorativo) */}
       <div className="hidden lg:flex w-1/2 relative items-center justify-center p-12">
          <div className="absolute inset-0 bg-blue-600/5 z-0"></div>
          <div className="absolute top-1/3 left-1/3 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-[120px] animate-pulse"></div>
@@ -137,8 +161,10 @@ export default function Login() {
          </div>
       </div>
 
+      {/* Lado Derecho (Formulario) */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 bg-slate-950 lg:bg-slate-900/30 lg:backdrop-blur-sm border-l border-slate-800">
         <GlassCard className="w-full max-w-md p-10 border-slate-800 shadow-2xl">
+            
             <div className="text-center mb-8">
                 <div className="h-16 w-16 mx-auto bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-blue-900/20">
                     <span className="text-3xl font-black text-white italic">K</span>
@@ -147,20 +173,27 @@ export default function Login() {
                   {isLoginMode ? 'Bienvenido al Staff' : 'Crear Cuenta'}
                 </h2>
             </div>
+
             {errorMsg && (
               <div className="mb-6 p-3 bg-red-500/10 border border-red-500/50 rounded-xl flex items-center gap-3 text-red-400 text-xs font-bold animate-pulse">
                 <ShieldAlert size={16} /> {errorMsg}
               </div>
             )}
+
+            {/* --- BOTÓN GOOGLE --- */}
             <button onClick={handleGoogleClick} disabled={loading} className="w-full py-3 bg-white hover:bg-slate-200 text-slate-900 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-3 shadow-lg active:scale-95 disabled:opacity-50 mb-6">
                 <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-5 h-5" />
+                {/* ✅ MEJORA VISUAL: Texto dinámico de carga */}
                 {loading ? 'Conectando...' : 'Continuar con Google'}
             </button>
+
             <div className="flex items-center gap-4 mb-6">
                 <div className="h-px bg-slate-800 flex-1"></div>
                 <span className="text-slate-600 text-[10px] font-bold uppercase">O con Email</span>
                 <div className="h-px bg-slate-800 flex-1"></div>
             </div>
+
+            {/* --- FORMULARIO EMAIL --- */}
             <form onSubmit={handleEmailAuth} className="space-y-4">
                 {!isLoginMode && (
                   <div className="relative group">
@@ -181,14 +214,18 @@ export default function Login() {
                     <Building className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                     <select className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500" value={sede} onChange={(e) => setSede(e.target.value)}>
                       <option value="Catamarca">Catamarca</option>
-                      <option value="Santiago">Santiago</option>
+                      <option value="Santiago del Estero">Santiago del Estero</option>
+                      <option value="Pilar">Pilar</option>
+                      <option value="San Nicolás">San Nicolás</option>
                     </select>
                   </div>
                 )}
+
                 <button type="submit" disabled={loading} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all shadow-lg active:scale-95 disabled:opacity-50">
                   {loading ? <Loader2 className="animate-spin mx-auto"/> : (isLoginMode ? 'INGRESAR' : 'REGISTRARSE')}
                 </button>
             </form>
+
             <div className="mt-6 text-center">
                 <button onClick={() => { setIsLoginMode(!isLoginMode); setErrorMsg(null); }} className="text-xs text-slate-500 hover:text-blue-400 font-medium">
                   {isLoginMode ? "¿No tienes cuenta? Regístrate" : "Volver al Login"}
