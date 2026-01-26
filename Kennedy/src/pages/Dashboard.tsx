@@ -4,7 +4,7 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { 
   LayoutDashboard, Users, GraduationCap, MessageSquare, 
   Search, Bell, Settings, LogOut, CheckCircle2, AlertCircle, 
-  Send, FileText, ChevronRight, UserPlus, Shield, Bot, Activity
+  Send, FileText, ChevronRight, UserPlus, Shield, Bot, Activity, Sparkles
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_KENNEDY_API_URL || 'http://localhost:4001';
@@ -36,6 +36,11 @@ export default function Dashboard() {
   const [chatHistory, setChatHistory] = useState<any[]>([]);
   const [messageInput, setMessageInput] = useState('');
   const [search, setSearch] = useState('');
+
+  // --- ESTADOS PARA LA IA (Analista) ---
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiAnswer, setAiAnswer] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
 
   // Referencia para el scroll del chat
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -99,6 +104,9 @@ export default function Dashboard() {
   const handleStudentClick = async (student: any) => {
     setSelectedStudent(student);
     setActiveTab('chat');
+    // Limpiar estado de IA al cambiar alumno
+    setAiAnswer(''); 
+    setAiQuestion('');
     
     const token = localStorage.getItem('sb-token');
     const res = await fetch(`${API_URL}/api/students/${student.id}`, {
@@ -115,10 +123,8 @@ export default function Dashboard() {
       if (!selectedStudent) return;
       const token = localStorage.getItem('sb-token');
       
-      // Actualización Optimista (UI primero)
       const prevValue = selectedStudent[field]; 
       
-      // Mapeo de nombres de campo frontend -> backend
       let dbField = field;
       if (field === 'bot_active') dbField = 'bot_active'; 
       if (field === 'solicita_secretaria') dbField = 'solicita_secretaria';
@@ -132,13 +138,12 @@ export default function Dashboard() {
               body: JSON.stringify({ [dbField]: value })
           });
           
-          // Si cambiamos 'solicita_secretaria' a false (ya atendido), recargar lista principal
           if (field === 'solicita_secretaria' && value === false) fetchData();
 
       } catch (err) {
           console.error(err);
           alert("Error actualizando datos.");
-          setSelectedStudent({ ...selectedStudent, [field]: prevValue }); // Revertir cambio
+          setSelectedStudent({ ...selectedStudent, [field]: prevValue }); 
       }
   };
 
@@ -164,6 +169,32 @@ export default function Dashboard() {
 
     setChatHistory([...chatHistory, { role: 'assistant', content: messageInput, id: Date.now() }]);
     setMessageInput('');
+  };
+
+  // --- PREGUNTAR A LA IA (NUEVO) ---
+  const handleAskAI = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!aiQuestion.trim() || !selectedStudent) return;
+    setAnalyzing(true);
+    setAiAnswer('');
+
+    try {
+        const token = localStorage.getItem('sb-token');
+        const res = await fetch(`${API_URL}/api/bot/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ 
+                studentId: selectedStudent.id, 
+                question: aiQuestion 
+            })
+        });
+        const data = await res.json();
+        setAiAnswer(data.answer);
+    } catch (err) {
+        alert("Error consultando a la IA");
+    } finally {
+        setAnalyzing(false);
+    }
   };
 
   // --- GESTIÓN DE EQUIPO ---
@@ -297,7 +328,7 @@ export default function Dashboard() {
                           <p className="text-sm text-slate-500 mt-1">{selectedStudent.dni}</p>
                       </div>
 
-                      {/* --- CONTROLES DE ESTADO (NUEVO) --- */}
+                      {/* --- CONTROLES DE ESTADO --- */}
                       <div className="space-y-6">
                           
                           {/* 1. ESTADO DEL ALUMNO */}
@@ -316,7 +347,7 @@ export default function Dashboard() {
                               </select>
                           </div>
 
-                          {/* 2. CONTROL DEL BOT (NUEVO) */}
+                          {/* 2. CONTROL DEL BOT */}
                           <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex items-center justify-between">
                               <div>
                                   <label className="text-xs font-bold text-slate-400 uppercase block mb-1 flex items-center gap-2">
@@ -377,45 +408,88 @@ export default function Dashboard() {
                       )}
                   </GlassCard>
 
-                  {/* PANEL DERECHO: CHAT */}
-                  <GlassCard className="lg:col-span-2 flex flex-col overflow-hidden relative">
-                      <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-950/30">
-                          {chatHistory.length === 0 ? (
-                              <div className="flex flex-col items-center justify-center h-full text-slate-600 opacity-50">
-                                  <MessageSquare size={48} className="mb-4" />
-                                  <p>Historial de conversación vacío</p>
-                              </div>
-                          ) : (
-                              chatHistory.map((msg) => (
-                                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
-                                      <div className={`max-w-[80%] rounded-2xl p-4 text-sm leading-relaxed whitespace-pre-wrap shadow-md ${
-                                          msg.role === 'user' 
-                                          ? 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700' 
-                                          : 'bg-blue-600 text-white rounded-tr-none'
-                                      }`}>
-                                          {msg.content}
-                                      </div>
+                  {/* PANEL DERECHO: CHAT + IA */}
+                  <div className="lg:col-span-2 flex flex-col gap-4 overflow-hidden h-full">
+                      
+                      {/* 1. CHAT HISTORY */}
+                      <GlassCard className="flex-1 flex flex-col overflow-hidden relative border-slate-800">
+                          <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-950/30">
+                              {chatHistory.length === 0 ? (
+                                  <div className="flex flex-col items-center justify-center h-full text-slate-600 opacity-50">
+                                      <MessageSquare size={48} className="mb-4" />
+                                      <p>Historial de conversación vacío</p>
                                   </div>
-                              ))
-                          )}
-                          <div ref={messagesEndRef} />
-                      </div>
+                              ) : (
+                                  chatHistory.map((msg) => (
+                                      <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
+                                          <div className={`max-w-[80%] rounded-2xl p-4 text-sm leading-relaxed whitespace-pre-wrap shadow-md ${
+                                              msg.role === 'user' 
+                                              ? 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700' 
+                                              : 'bg-blue-600 text-white rounded-tr-none'
+                                          }`}>
+                                              {msg.content}
+                                          </div>
+                                      </div>
+                                  ))
+                              )}
+                              <div ref={messagesEndRef} />
+                          </div>
 
-                      <div className="p-4 bg-slate-900 border-t border-slate-800">
-                          <form onSubmit={handleSendMessage} className="flex gap-2">
-                              <input 
-                                  type="text" 
-                                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-all placeholder:text-slate-600"
-                                  placeholder="Escribir mensaje..."
-                                  value={messageInput}
-                                  onChange={(e) => setMessageInput(e.target.value)}
-                              />
-                              <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl transition-all">
-                                  <Send size={20} />
-                              </button>
-                          </form>
-                      </div>
-                  </GlassCard>
+                          <div className="p-4 bg-slate-900 border-t border-slate-800">
+                              <form onSubmit={handleSendMessage} className="flex gap-2">
+                                  <input 
+                                      type="text" 
+                                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-all placeholder:text-slate-600"
+                                      placeholder="Escribir mensaje..."
+                                      value={messageInput}
+                                      onChange={(e) => setMessageInput(e.target.value)}
+                                  />
+                                  <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl transition-all">
+                                      <Send size={20} />
+                                  </button>
+                              </form>
+                          </div>
+                      </GlassCard>
+
+                      {/* 2. PANEL IA ANALISTA (NUEVO) */}
+                      <GlassCard className="h-64 flex flex-col border-blue-500/20 bg-blue-900/5">
+                            <div className="px-4 py-3 border-b border-blue-500/20 flex items-center gap-2 text-blue-400 bg-blue-900/20">
+                                <Sparkles size={16} />
+                                <h3 className="font-bold text-xs uppercase tracking-widest">Asistente Inteligente (RAG)</h3>
+                            </div>
+                            
+                            <div className="flex-1 p-4 overflow-y-auto bg-slate-950/40 text-sm text-slate-300 leading-relaxed scrollbar-thin scrollbar-thumb-blue-900/50">
+                                {analyzing ? (
+                                    <div className="flex items-center gap-3 text-blue-400 animate-pulse h-full justify-center">
+                                        <Bot size={24} className="animate-bounce" />
+                                        <span>Analizando documentos y chats...</span>
+                                    </div>
+                                ) : aiAnswer ? (
+                                    aiAnswer
+                                ) : (
+                                    <div className="h-full flex items-center justify-center text-slate-600 italic text-xs text-center px-8">
+                                        "Hazme una pregunta sobre este alumno. Puedo leer su historial y los archivos PDF de su Google Drive."
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="p-3 bg-slate-900/80 border-t border-blue-500/20">
+                                <form onSubmit={handleAskAI} className="flex gap-2">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Ej: ¿El alumno debe alguna documentación?"
+                                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none placeholder:text-slate-600"
+                                        value={aiQuestion}
+                                        onChange={(e) => setAiQuestion(e.target.value)}
+                                    />
+                                    <button disabled={analyzing} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                                        {analyzing ? 'Pensando...' : 'Preguntar'}
+                                    </button>
+                                </form>
+                            </div>
+                      </GlassCard>
+
+                  </div>
               </div>
           )}
 
