@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabaseClient';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { Loader2, ShieldAlert, LogIn, UserPlus, Mail, Lock, Building, User } from 'lucide-react';
+import { Loader2, ShieldAlert, Mail, Lock, Building, User } from 'lucide-react';
 
 // ✅ CORRECCIÓN URL: Usamos la raíz del servidor, sin '/api' extra al final si ya lo tiene.
 // Si tu backend corre en localhost:4001, la base es esa.
-const BACKEND_URL = 'http://localhost:4001'; 
+const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
 
 export default function Login() {
   const navigate = useNavigate();
