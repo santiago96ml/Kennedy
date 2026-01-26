@@ -69,7 +69,7 @@ export default function Dashboard() {
     const intervalId = setInterval(() => {
         if (activeTab === 'students') fetchData(); 
         if (activeTab === 'chat' && selectedStudent) refreshChatForStudent(selectedStudent.id);
-    }, 30000); 
+    }, 300000); 
 
     return () => clearInterval(intervalId);
   }, [activeTab, selectedStudent]);
