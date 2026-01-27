@@ -1,20 +1,49 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/lib/supabaseClient'; 
 import { GlassCard } from '@/components/ui/GlassCard';
 import { 
-  Users, GraduationCap, MessageSquare, Search, LogOut, 
+  Users, GraduationCap, MessageSquare, LogOut, 
   CheckCircle2, AlertCircle, Send, ChevronRight, UserPlus, 
-  Bot, Sparkles, Pencil, Save, X, Phone, Mail, MapPin, Hash, Calendar, BookOpen,
-  Shield, Power, Activity, Loader2 // Agregué Loader2 para el icono de carga
+  Bot, Sparkles, Pencil, X, Phone, Mail, MapPin, BookOpen,
+  Shield, Power, Activity, Trash2, Plus, Loader2, Eye, Map, Lock
 } from 'lucide-react';
 
-// Si te sigue marcando error aquí, asegúrate de tener el archivo src/vite-env.d.ts
 const API_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host';
+
+// 🔒 CONSTANTE PARA LA CUENTA PROTEGIDA
+const SUPER_ADMIN_EMAIL = 'kennedy.vintex@gmail.com';
 
 const STUDENT_STATUSES = [
   "Sólo preguntó", "Documentación", "En Proceso", 
   "Inscripto", "Deudor", "Reconocimiento", "Alumno Regular"
 ];
+
+// Lista de Sedes disponibles
+const SEDES_KENNEDY = [
+    "CATAMARCA",
+    "PILAR",
+    "SANTIAGO DEL ESTERO",
+    "SAN NICOLÁS"
+];
+
+const EMPTY_STUDENT = {
+  legdef: '', 
+  full_name: '', 
+  "numero Identificacion": '', 
+  telefono1: '', 
+  telefono2: '',
+  "correo Personal": '', 
+  "correo Corporativo": '', 
+  "nombrePrograma": '', 
+  "codTipoPrograma": '',
+  "codPuntoKennedy": 'CATAMARCA', 
+  "anio De Egreso": '', 
+  status: 'Sólo preguntó', 
+  mood: 'Neutro',
+  "solicita secretaria": false,
+  "bot active": true
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -27,28 +56,34 @@ export default function Dashboard() {
   const [staffList, setStaffList] = useState<any[]>([]);
   
   // Estado UI
-  // CORRECCIÓN: Ahora usamos esta variable en el renderizado (ver línea 336 aprox)
   const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  
+  // Estado Admin
+  const [globalBotActive, setGlobalBotActive] = useState(true); 
+
+  // --- ESTADOS PARA MODALES Y PANELES ---
+
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [chatHistory, setChatHistory] = useState<any[]>([]);
   const [messageInput, setMessageInput] = useState('');
-  const [search, setSearch] = useState('');
   
-  // Estado Admin (Control Global del Bot)
-  const [globalBotActive, setGlobalBotActive] = useState(true); 
+  const [showCreateStudentModal, setShowCreateStudentModal] = useState(false);
+  const [showEditStudentModal, setShowEditStudentModal] = useState(false);
+  const [newStudentForm, setNewStudentForm] = useState<any>(EMPTY_STUDENT);
+  const [editStudentForm, setEditStudentForm] = useState<any>({});
 
-  // Estado Edición de Alumno
-  const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState<any>({});
+  const [selectedCareer, setSelectedCareer] = useState<any>(null);
+  const [isEditingCareer, setIsEditingCareer] = useState(false);
+  const [editCareerForm, setEditCareerForm] = useState<any>({});
 
-  // IA
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiAnswer, setAiAnswer] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // --- CARGA INICIAL Y POLLING ---
+  // --- CARGA INICIAL Y REALTIME ---
   useEffect(() => {
     const storedUser = localStorage.getItem('user-data');
     const token = localStorage.getItem('sb-token');
@@ -60,21 +95,33 @@ export default function Dashboard() {
     
     if (!user) setUser(JSON.parse(storedUser));
     
-    // Carga inicial de datos
     fetchData();
     fetchCareers();
     fetchStaff();
-    fetchGlobalBotStatus(); 
+    fetchGlobalBotStatus();
 
-    const intervalId = setInterval(() => {
-        if (activeTab === 'students') fetchData(); 
-        if (activeTab === 'chat' && selectedStudent) refreshChatForStudent(selectedStudent.id);
-    }, 300000); 
+    const channel = supabase.channel('dashboard-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'student' }, () => {
+          fetchData(); 
+          if(selectedStudent) refreshChatForStudent(selectedStudent.id);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'perfil_staff' }, () => {
+          fetchStaff();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'resumen_carreras' }, () => {
+          fetchCareers();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'Mensaje_de_secretaria' }, () => {
+          if(selectedStudent) refreshChatForStudent(selectedStudent.id);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bot_settings' }, () => {
+          fetchGlobalBotStatus();
+      })
+      .subscribe();
 
-    return () => clearInterval(intervalId);
-  }, [activeTab, selectedStudent]);
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedStudent]); 
 
-  
   useEffect(() => {
     if (activeTab === 'chat') scrollToBottom();
   }, [chatHistory, activeTab]);
@@ -83,10 +130,9 @@ export default function Dashboard() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // --- FUNCIONES DE DATOS ---
+  // --- API CALLS ---
 
   const fetchData = async () => {
-    // Solo activamos loading si no hay alumnos cargados previamente para evitar parpadeos
     if (students.length === 0) setLoading(true);
     try {
       const token = localStorage.getItem('sb-token');
@@ -105,8 +151,11 @@ export default function Dashboard() {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await res.json();
-        if (data.chatHistory && data.chatHistory.length !== chatHistory.length) {
-            setChatHistory(data.chatHistory); 
+        if (data.chatHistory) {
+            setChatHistory(prev => {
+                if (prev.length !== data.chatHistory.length) return data.chatHistory;
+                return prev;
+            }); 
         }
       } catch (e) { console.error(e); }
   };
@@ -125,49 +174,32 @@ export default function Dashboard() {
     setStaffList(data);
   };
 
-  // --- LÓGICA ADMIN (BOT TOGGLE) ---
+  // --- GESTIÓN ALUMNOS ---
 
-  const fetchGlobalBotStatus = async () => {
-    try {
-        const token = localStorage.getItem('sb-token');
-        const res = await fetch(`${API_URL}/api/admin/bot-status`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.ok) {
-            const data = await res.json();
-            if (typeof data.is_active === 'boolean') {
-                setGlobalBotActive(data.is_active);
-            } else if (typeof data.active === 'boolean') {
-                setGlobalBotActive(data.active);
-            }
-        }
-    } catch (e) { console.error("Error fetching bot status", e); }
+  const handleCreateStudent = async () => {
+      const token = localStorage.getItem('sb-token');
+      try {
+          const res = await fetch(`${API_URL}/api/students`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+              body: JSON.stringify(newStudentForm)
+          });
+          
+          if(res.ok) {
+              alert("✅ Alumno creado exitosamente");
+              setShowCreateStudentModal(false);
+              setNewStudentForm(EMPTY_STUDENT);
+              fetchData();
+          } else {
+              const err = await res.json();
+              alert("❌ Error: " + err.error);
+          }
+      } catch (e) { console.error(e); alert("Error de conexión"); }
   };
-
-  const toggleSystemBot = async () => {
-    const newState = !globalBotActive;
-    setGlobalBotActive(newState); 
-
-    try {
-        const token = localStorage.getItem('sb-token');
-        await fetch(`${API_URL}/api/admin/bot-status`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ is_active: newState }) 
-        });
-    } catch (e) {
-        console.error("Error cambiando estado del bot", e);
-        setGlobalBotActive(!newState); 
-        alert("Error al conectar con el servidor");
-    }
-  };
-
-  // --- INTERACCIÓN ALUMNO ---
 
   const handleStudentClick = async (student: any) => {
     setSelectedStudent(student);
     setActiveTab('chat');
-    setIsEditing(false); 
     setAiAnswer(''); setAiQuestion('');
     
     const token = localStorage.getItem('sb-token');
@@ -179,55 +211,24 @@ export default function Dashboard() {
     if (data.chatHistory) setChatHistory(data.chatHistory);
   };
 
-  const startEditing = () => {
-    setEditForm({
-      full_name: selectedStudent.full_name || '',
-      dni: selectedStudent['numero Identificacion'] || '',
-      legdef: selectedStudent.legdef || '',
-      telefono1: selectedStudent.telefono1 || '',
-      telefono2: selectedStudent.telefono2 || '',
-      email_personal: selectedStudent['correo Personal'] || '',
-      email_corporativo: selectedStudent['correo Corporativo'] || '',
-      carrera: selectedStudent['nombrePrograma'] || '',
-      tipo_programa: selectedStudent['codTipoPrograma'] || '',
-      sede: selectedStudent['codPuntoKennedy'] || '',
-      anio_egreso: selectedStudent['anio De Egreso'] || '',
-      status: selectedStudent.status || ''
-    });
-    setIsEditing(true);
+  const openEditStudentModal = () => {
+    setEditStudentForm(selectedStudent);
+    setShowEditStudentModal(true);
   };
 
-  const saveEditing = async () => {
+  const saveStudentChanges = async () => {
     const token = localStorage.getItem('sb-token');
     try {
-      await fetch(`${API_URL}/api/students/${selectedStudent.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(editForm)
-      });
-      
-      setSelectedStudent({ 
-        ...selectedStudent, 
-        full_name: editForm.full_name,
-        'numero Identificacion': editForm.dni,
-        legdef: editForm.legdef,
-        telefono1: editForm.telefono1,
-        telefono2: editForm.telefono2,
-        'correo Personal': editForm.email_personal,
-        'correo Corporativo': editForm.email_corporativo,
-        'nombrePrograma': editForm.carrera,
-        'codTipoPrograma': editForm.tipo_programa,
-        'codPuntoKennedy': editForm.sede,
-        'anio De Egreso': editForm.anio_egreso,
-        status: editForm.status
-      });
-
-      setIsEditing(false);
-      fetchData(); 
-      alert("✅ Datos guardados correctamente");
-    } catch (e) {
-      alert("Error al guardar cambios");
-    }
+        await fetch(`${API_URL}/api/students/${selectedStudent.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify(editStudentForm)
+        });
+        setSelectedStudent(editStudentForm);
+        setShowEditStudentModal(false);
+        fetchData(); 
+        alert("✅ Datos actualizados");
+    } catch (e) { alert("Error guardando cambios"); }
   };
 
   const handleQuickUpdate = async (field: string, value: any) => {
@@ -236,11 +237,12 @@ export default function Dashboard() {
       const prevValue = selectedStudent[field]; 
       
       let dbField = field;
-      if (field === 'bot_active') dbField = 'bot_active'; 
+      // Aseguramos que la clave coincida exactamente con la base de datos
+      if (field === 'bot active') dbField = 'bot active'; 
       if (field === 'solicita_secretaria') dbField = 'solicita_secretaria';
-      if (field === 'status') dbField = 'status';
       
-      setSelectedStudent({ ...selectedStudent, [field]: value });
+      // Actualizamos estado local optimista (usando la clave exacta que tiene el objeto, ej: "bot active")
+      setSelectedStudent({ ...selectedStudent, [field]: value }); 
 
       try {
           await fetch(`${API_URL}/api/students/${selectedStudent.id}`, {
@@ -254,6 +256,97 @@ export default function Dashboard() {
           setSelectedStudent({ ...selectedStudent, [field]: prevValue }); 
       }
   };
+
+  // --- GESTIÓN CARRERAS ---
+
+  const handleCareerClick = (career: any) => {
+      setSelectedCareer(career);
+      setEditCareerForm(career);
+      setIsEditingCareer(false); 
+  };
+
+  const saveCareerChanges = async () => {
+      const token = localStorage.getItem('sb-token');
+      const res = await fetch(`${API_URL}/api/careers/${selectedCareer.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify(editCareerForm)
+      });
+      
+      if(res.ok) {
+          alert("✅ Carrera actualizada correctamente");
+          setSelectedCareer(editCareerForm);
+          setIsEditingCareer(false);
+          fetchCareers();
+      } else {
+          const err = await res.json();
+          alert("❌ Error: " + err.error);
+      }
+  };
+
+  // --- GESTIÓN STAFF (Roles, Sede y Eliminación) ---
+
+  const handleUpdateStaff = async (id: number, role: any, sede: string) => {
+    const finalRole = role === "null" ? null : role;
+    
+    const token = localStorage.getItem('sb-token');
+    await fetch(`${API_URL}/api/staff/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ newRole: finalRole, newSede: sede })
+    });
+    fetchStaff();
+  };
+
+  const handleDeleteStaff = async (id: number) => {
+      if(!confirm("⚠️ ¿Estás seguro de eliminar este usuario FÍSICAMENTE de la base de datos?")) return;
+      
+      const token = localStorage.getItem('sb-token');
+      const res = await fetch(`${API_URL}/api/staff/${id}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if(res.ok) {
+          alert("Usuario eliminado.");
+          fetchStaff();
+      } else {
+          alert("Error eliminando usuario.");
+      }
+  };
+
+  // --- BOT CONTROL ---
+
+  const fetchGlobalBotStatus = async () => {
+    try {
+        const token = localStorage.getItem('sb-token');
+        const res = await fetch(`${API_URL}/api/admin/bot-status`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (typeof data.is_active === 'boolean') setGlobalBotActive(data.is_active);
+        }
+    } catch (e) { }
+  };
+
+  const toggleSystemBot = async () => {
+    const newState = !globalBotActive;
+    setGlobalBotActive(newState); 
+    try {
+        const token = localStorage.getItem('sb-token');
+        await fetch(`${API_URL}/api/admin/bot-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ is_active: newState }) 
+        });
+    } catch (e) {
+        setGlobalBotActive(!newState); 
+        alert("Error al conectar con el servidor");
+    }
+  };
+
+  // --- CHAT SYSTEM ---
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -290,109 +383,50 @@ export default function Dashboard() {
     } catch (err) { alert("Error IA"); } finally { setAnalyzing(false); }
   };
 
-  const handleApproveStaff = async (id: number, role: string, sede: string) => {
-      const token = localStorage.getItem('sb-token');
-      await fetch(`${API_URL}/api/staff/${id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ newRole: role, newSede: sede })
-      });
-      fetchStaff();
-  };
-
-  // --- LÓGICA DE PARSEO AVANZADO (MULTIPLE IMG + LIMPIEZA) ---
   const renderMessageContent = (text: string) => {
     let cleanText = text;
+    let images: string[] = [];
 
-    // 1. INTENTAR PARSEAR JSON (Maneja string sucio o string JSON limpio)
     if (typeof text === 'string') {
-        // Buscar patrón {"output":
         const jsonStartIndex = text.indexOf('{"output":');
-        
         if (jsonStartIndex !== -1) {
-            const potentialJson = text.substring(jsonStartIndex);
             try {
-                const parsed = JSON.parse(potentialJson);
-                if (parsed.output?.message) {
-                    cleanText = parsed.output.message;
-                }
-            } catch (e) { /* Error silencioso, usamos texto original */ }
+                const parsed = JSON.parse(text.substring(jsonStartIndex));
+                if (parsed.output?.message) cleanText = parsed.output.message;
+            } catch (e) {}
         } else {
-            // Intento parse directo por si es JSON puro sin logs
-            try {
+             try {
                 const parsed = JSON.parse(text);
                 if (parsed.output?.message) cleanText = parsed.output.message;
                 else if (parsed.message) cleanText = parsed.message;
-            } catch (e) { /* No es JSON, es texto plano */ }
+            } catch (e) {}
         }
     }
 
     if (typeof cleanText !== 'string') return null;
 
-    // 2. BUSCAR TODAS LAS IMÁGENES (MATCH ALL)
-    // Regex con flag 'g' para encontrar todas las coincidencias
     const driveRegex = /https:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/g;
     const matches = [...cleanText.matchAll(driveRegex)];
-    const imageIds = matches.map(m => m[1]);
+    if (matches.length > 0) {
+        images = matches.map(m => m[1]);
+        const splitText = cleanText.split('Descripción de la imagen enviada:');
+        if (splitText.length > 0) cleanText = splitText[0].trim();
+    }
 
-    // 3. LIMPIEZA DE TEXTO
-    // A. Quitar los links del texto para que no se vean duplicados
-    let displayText = cleanText.replace(driveRegex, '').trim();
-
-    // B. Quitar texto técnico del sistema ("Descripción de la imagen...")
-    // Cortamos el texto antes de que empiece la descripción técnica
-    const technicalSplitters = [
-        "Descripción de la imagen", 
-        "Description of the image",
-        "Image description"
-    ];
-    
-    technicalSplitters.forEach(splitter => {
-        const splitIndex = displayText.indexOf(splitter);
-        if (splitIndex !== -1) {
-            displayText = displayText.substring(0, splitIndex).trim();
-        }
-    });
-    
-    // Quitar comas o puntos sueltos que quedan tras borrar links
-    displayText = displayText.replace(/^[,.\s]+|[,.\s]+$/g, '');
-
-    // 4. RENDERIZADO FINAL
     return (
         <div className="flex flex-col gap-2">
-            {/* Texto limpio del usuario (si queda algo) */}
-            {displayText && (
-                <div className="whitespace-pre-wrap">{displayText}</div>
-            )}
-
-            {/* Galería de imágenes (Si hay matches) */}
-            {imageIds.length > 0 && (
+            {cleanText && <p className="whitespace-pre-wrap">{cleanText}</p>}
+            {images.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-1">
-                    {imageIds.map((fileId, idx) => (
-                        <div key={idx} className="relative group rounded-lg overflow-hidden border border-slate-700 bg-black/20">
-                            <a 
-                                href={`https://drive.google.com/file/d/${fileId}/view`} 
-                                target="_blank" 
-                                rel="noreferrer"
-                                className="block"
-                            >
-                                <img 
-                                    // Usamos lh3.googleusercontent para thumbnails rápidos o fallback a la lógica anterior
-                                    src={`https://lh3.googleusercontent.com/d/${fileId}=s400`} 
-                                    alt={`Adjunto ${idx + 1}`} 
-                                    className="max-w-[200px] h-auto max-h-[200px] object-cover hover:opacity-90 transition-opacity" 
-                                    onError={(e) => {
-                                        // Fallback si falla la carga directa
-                                        const target = e.target as HTMLImageElement;
-                                        target.src = "https://cdn-icons-png.flaticon.com/512/337/337946.png"; 
-                                        target.className = "w-16 h-16 p-2 bg-white object-contain mx-auto";
-                                    }}
-                                />
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                    <span className="text-white text-xs font-bold bg-black/60 px-2 py-1 rounded">Ver</span>
-                                </div>
-                            </a>
-                        </div>
+                    {images.map((fileId, idx) => (
+                        <a key={idx} href={`https://drive.google.com/file/d/${fileId}/view`} target="_blank" rel="noreferrer" className="block relative group rounded-lg overflow-hidden border border-slate-700 w-fit">
+                            <img src={`https://lh3.googleusercontent.com/d/${fileId}=s400`} alt="Adjunto" className="w-48 h-40 object-cover hover:opacity-90 transition-opacity" 
+                                onError={(e) => { (e.target as HTMLImageElement).src = "https://cdn-icons-png.flaticon.com/512/337/337946.png"; (e.target as HTMLImageElement).className = "w-16 h-16 p-4 bg-white object-contain"; }}
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <span className="text-white text-xs font-bold bg-black/60 px-2 py-1 rounded">Abrir</span>
+                            </div>
+                        </a>
                     ))}
                 </div>
             )}
@@ -400,12 +434,12 @@ export default function Dashboard() {
     );
   };
 
-  // --- RENDERIZADO ---
+  // --- RENDER UI ---
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-200 font-sans">
       
-      {/* 1. SIDEBAR */}
-      <aside className="hidden md:flex w-20 lg:w-64 bg-slate-900/50 border-r border-slate-800 flex-col justify-between p-4 sticky top-0 h-screen z-50">
+      {/* SIDEBAR */}
+      <aside className="hidden md:flex w-20 lg:w-64 bg-slate-900/50 border-r border-slate-800 flex-col p-4 sticky top-0 h-screen z-50">
         <div>
           <div className="flex items-center gap-3 mb-10 px-2">
             <div className="h-10 w-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center shrink-0 shadow-lg">
@@ -415,463 +449,394 @@ export default function Dashboard() {
           </div>
 
           <nav className="space-y-2">
-            <NavItem icon={<Users />} label="Alumnos" active={activeTab === 'students'} onClick={() => {setActiveTab('students'); setSelectedStudent(null); fetchData();}} />
+            <NavItem icon={<Users />} label="Alumnos" active={activeTab === 'students' || activeTab === 'chat'} onClick={() => {setActiveTab('students'); setSelectedStudent(null);}} />
             <NavItem icon={<GraduationCap />} label="Carreras" active={activeTab === 'careers'} onClick={() => setActiveTab('careers')} />
             {(user?.rol === 'admin' || user?.rol === 'asesor') && (
-                <NavItem icon={<UserPlus />} label="Equipo" active={activeTab === 'staff'} onClick={() => { setActiveTab('staff'); fetchStaff(); }} />
+                <NavItem icon={<UserPlus />} label="Equipo" active={activeTab === 'staff'} onClick={() => setActiveTab('staff')} />
             )}
-            {/* NUEVO ITEM ADMIN */}
             {user?.rol === 'admin' && (
                 <NavItem icon={<Shield className="text-red-400" />} label="Admin" active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} />
             )}
           </nav>
         </div>
-
         <button onClick={() => { localStorage.clear(); navigate('/login'); }} className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-400 hover:bg-red-500/10 hover:text-red-400 transition-all group">
           <LogOut size={20} />
           <span className="hidden lg:block font-medium text-sm group-hover:translate-x-1 transition-transform">Salir</span>
         </button>
       </aside>
 
-      {/* 2. MAIN CONTENT */}
-      <main className="flex-1 relative mb-24 md:mb-0">
-        <div className="w-full p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
-          
-          <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-white mb-1">
-                {activeTab === 'students' ? 'Panel de Alumnos' : 
-                 activeTab === 'chat' ? 'Expediente' : 
-                 activeTab === 'staff' ? 'Equipo' : 
-                 activeTab === 'admin' ? 'Administración' : 'Carreras'}
-              </h1>
-              <p className="text-slate-500 text-sm flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${user?.sede ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-                {user?.nombre} | {user?.sede || 'Global'}
-              </p>
-            </div>
-            
-            {activeTab === 'students' && (
-                <div className="relative group w-full md:w-auto">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-500 transition-colors" size={18} />
-                    <input 
-                    type="text" 
-                    placeholder="Buscar por nombre o DNI..." 
-                    className="bg-slate-900 border border-slate-800 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-blue-500 w-full md:w-64 lg:w-96 transition-all"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && fetchData()}
-                    />
+      {/* MAIN CONTENT */}
+      <main className="flex-1 p-6 max-w-7xl mx-auto mb-20">
+         <header className="flex justify-between items-center mb-8">
+            <h1 className="text-2xl font-bold text-white capitalize">{activeTab === 'chat' ? 'Expediente' : activeTab === 'students' ? 'Panel de Alumnos' : activeTab}</h1>
+            {activeTab === 'students' && (user?.rol === 'admin' || user?.rol === 'asesor') && (
+                <div className="flex gap-2">
+                    <input className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-blue-500" placeholder="Buscar..." value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && fetchData()}/>
+                    <button onClick={() => setShowCreateStudentModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-xl flex items-center gap-2 px-4 text-sm font-bold shadow-lg active:scale-95 transition-all">
+                        <Plus size={16}/> Nuevo
+                    </button>
                 </div>
             )}
-          </header>
+         </header>
 
-          {/* VISTAS */}
-          
-          {/* A. LISTA ALUMNOS */}
-          {activeTab === 'students' && (
+         {/* 1. LISTA ALUMNOS */}
+         {activeTab === 'students' && (
             <div className="grid gap-3">
-                {/* CORRECCIÓN: IMPLEMENTACIÓN DE LOADING */}
-                {loading && (
-                    <div className="flex flex-col items-center justify-center p-12 text-slate-500">
-                        <Loader2 className="animate-spin mb-2" size={32} />
-                        <p>Cargando alumnos...</p>
-                    </div>
-                )}
-
-                {!loading && students.map((s) => (
-                    <GlassCard key={s.id} className={`p-4 flex items-center justify-between hover:bg-slate-800/50 cursor-pointer transition-all border-l-4 ${s.solicita_secretaria ? 'border-l-red-500 bg-red-500/5' : 'border-l-transparent'}`} onClick={() => handleStudentClick(s)}>
-                        <div className="flex items-center gap-3 md:gap-4 overflow-hidden">
-                            <div className={`h-10 w-10 rounded-full flex shrink-0 items-center justify-center font-bold text-xs ${s.solicita_secretaria ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'}`}>
-                                {s.full_name?.substring(0,2).toUpperCase()}
-                            </div>
-                            <div className="min-w-0">
-                                <h3 className="font-bold text-white text-sm truncate">{s.full_name}</h3>
-                                <p className="text-xs text-slate-500 truncate">{s['numero Identificacion']} | {s.status}</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-2 md:gap-6 shrink-0">
-                            <div className={`hidden md:block px-3 py-1 rounded-full text-[10px] font-bold uppercase border ${
-                                s.mood?.toLowerCase().includes('enojado') ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                                'bg-slate-800 text-slate-400 border-slate-700'
-                            }`}>
-                                {s.mood}
-                            </div>
-                            {s.solicita_secretaria && (
-                                <div className="text-red-400 animate-pulse">
-                                    <AlertCircle size={20} />
-                                </div>
-                            )}
-                            <ChevronRight size={16} className="text-slate-600" />
-                        </div>
-                    </GlassCard>
-                ))}
+                {loading && <div className="text-center py-10"><Loader2 className="animate-spin mx-auto text-blue-500"/></div>}
+                {!loading && students.map(s => (
+                      <GlassCard key={s.id} className={`p-4 flex justify-between items-center cursor-pointer hover:bg-slate-800/50 border-l-4 ${s["solicita secretaria"] ? 'border-l-red-500 bg-red-500/5' : 'border-l-transparent'}`} onClick={() => handleStudentClick(s)}>
+                          <div className="flex items-center gap-4">
+                              <div className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-xs ${s["solicita secretaria"] ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                                  {s.full_name?.substring(0,2).toUpperCase()}
+                              </div>
+                              <div>
+                                  <h3 className="font-bold text-white text-sm">{s.full_name}</h3>
+                                  <p className="text-xs text-slate-500">{s.dni} | {s.status}</p>
+                              </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                             <span className={`px-2 py-1 rounded text-[10px] uppercase font-bold border ${s.mood?.includes('enojado') ? 'border-red-500/30 text-red-400' : 'border-slate-700 text-slate-400'}`}>{s.mood}</span>
+                             {s["solicita secretaria"] && <AlertCircle className="text-red-500 animate-pulse" size={18}/>}
+                             <ChevronRight size={16} className="text-slate-600"/>
+                          </div>
+                      </GlassCard>
+                  ))}
             </div>
-          )}
+         )}
 
-          {/* B. DETALLE (CHAT + IA + EDICIÓN COMPLETA) */}
-          {activeTab === 'chat' && selectedStudent && (
-              <div className="grid lg:grid-cols-3 gap-6">
-                  
-                  {/* PANEL IZQUIERDO: INFO Y EDICIÓN */}
-                  <div className="flex flex-col gap-6">
-                    <GlassCard className="p-6 relative">
-                        {/* Botón Editar/Cancelar */}
-                        <div className="absolute top-4 right-4 z-10">
-                            {!isEditing ? (
-                                <button onClick={startEditing} className="p-2 text-slate-400 hover:text-white bg-slate-800/50 rounded-full hover:bg-slate-700 transition-all" title="Editar Alumno">
-                                    <Pencil size={14} />
-                                </button>
-                            ) : (
-                                <button onClick={() => setIsEditing(false)} className="p-2 text-red-400 hover:text-white bg-red-900/20 rounded-full hover:bg-red-600 transition-all">
-                                    <X size={14} />
-                                </button>
-                            )}
-                        </div>
+         {/* 2. ALUMNO DETALLE Y CHAT */}
+         {activeTab === 'chat' && selectedStudent && (
+             <div className="grid lg:grid-cols-3 gap-6">
+                 {/* Panel Izquierdo: Info */}
+                 <div className="flex flex-col gap-4">
+                     <GlassCard className="p-6 relative">
+                         <div className="absolute top-4 right-4 z-10 flex gap-2">
+                             <button onClick={openEditStudentModal} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors" title="Editar Información">
+                                 <Pencil size={14}/>
+                             </button>
+                         </div>
 
-                        <div className="text-center pb-6 border-b border-slate-800">
-                             <div className="h-20 w-20 bg-slate-800 rounded-full mx-auto mb-4 flex items-center justify-center text-2xl font-bold text-slate-500">
-                                  {selectedStudent.full_name?.substring(0,1)}
+                         <div className="mt-4 space-y-6">
+                             <div className="text-center">
+                                 <div className="h-20 w-20 bg-slate-800 rounded-full mx-auto mb-4 flex items-center justify-center text-3xl font-bold text-slate-500">
+                                     {selectedStudent.full_name?.substring(0,1)}
+                                 </div>
+                                 <h2 className="text-xl font-bold text-white leading-tight">{selectedStudent.full_name}</h2>
+                                 <p className="text-sm text-slate-500 mt-1">{selectedStudent["numero Identificacion"]}</p>
                              </div>
-                             
-                             {isEditing ? (
-                                  <input 
-                                    type="text" 
-                                    placeholder="Nombre Completo"
-                                    className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-center text-white font-bold"
-                                    value={editForm.full_name}
-                                    onChange={(e) => setEditForm({...editForm, full_name: e.target.value})}
-                                  />
-                             ) : (
-                                  <h2 className="text-lg md:text-xl font-bold text-white leading-tight">{selectedStudent.full_name}</h2>
+
+                             <div className="space-y-4">
+                                 <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
+                                     <span className="text-xs font-bold text-slate-400 flex gap-2"><Bot size={16}/> IA Activa</span>
+                                     
+                                     {/* BOTÓN TOGGLE IA CON CORRECCIÓN DE KEY */}
+                                     <button 
+                                        onClick={() => handleQuickUpdate('bot active', !selectedStudent['bot active'])} 
+                                        className={`w-12 h-6 rounded-full p-1 flex items-center transition-all duration-300 ease-in-out active:scale-90 ${selectedStudent['bot active'] ? 'bg-green-500' : 'bg-slate-700'}`}
+                                     >
+                                         <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-300 ease-in-out ${selectedStudent['bot active'] ? 'translate-x-6' : 'translate-x-0'}`}></div>
+                                     </button>
+                                 </div>
+
+                                 <div className="space-y-3">
+                                     <InfoItem icon={<Phone size={12}/>} label="Teléfono" value={selectedStudent.telefono1}/>
+                                     <InfoItem icon={<Mail size={12}/>} label="Email" value={selectedStudent["correo Personal"]}/>
+                                     <InfoItem icon={<BookOpen size={12}/>} label="Carrera" value={selectedStudent["nombrePrograma"]}/>
+                                     <InfoItem icon={<MapPin size={12}/>} label="Sede" value={selectedStudent["codPuntoKennedy"]}/>
+                                     <InfoItem icon={<Activity size={12}/>} label="Estado" value={selectedStudent.status}/>
+                                 </div>
+                             </div>
+
+                             {selectedStudent["solicita secretaria"] && (
+                                 <div className="border-t border-slate-800 pt-6">
+                                     <button onClick={() => handleQuickUpdate('solicita_secretaria', false)} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2">
+                                         <CheckCircle2 size={16}/> Marcar Atendido
+                                     </button>
+                                 </div>
                              )}
-                             
-                             <p className="text-sm text-slate-500 mt-1">{selectedStudent['numero Identificacion']}</p>
-                        </div>
+                         </div>
+                     </GlassCard>
+                 </div>
 
-                      {/* --- FORMULARIO EDICIÓN --- */}
-                      {isEditing ? (
-                          <div className="pt-4 space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-                              
-                              {/* Sección 1: Identificación */}
-                              <div className="space-y-2">
-                                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1"><Hash size={10}/> Identificación</h4>
-                                  <div className="grid grid-cols-2 gap-2">
-                                      <input className="bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="DNI" value={editForm.dni} onChange={(e) => setEditForm({...editForm, dni: e.target.value})} />
-                                      <input className="bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Legajo" value={editForm.legdef} onChange={(e) => setEditForm({...editForm, legdef: e.target.value})} />
-                                  </div>
-                              </div>
-
-                              {/* Sección 2: Contacto */}
-                              <div className="space-y-2">
-                                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1"><Phone size={10}/> Contacto</h4>
-                                  <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Teléfono 1" value={editForm.telefono1} onChange={(e) => setEditForm({...editForm, telefono1: e.target.value})} />
-                                  <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Teléfono 2" value={editForm.telefono2} onChange={(e) => setEditForm({...editForm, telefono2: e.target.value})} />
-                                  <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Email Personal" value={editForm.email_personal} onChange={(e) => setEditForm({...editForm, email_personal: e.target.value})} />
-                                  <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Email Corporativo" value={editForm.email_corporativo} onChange={(e) => setEditForm({...editForm, email_corporativo: e.target.value})} />
-                              </div>
-
-                              {/* Sección 3: Académico */}
-                              <div className="space-y-2">
-                                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1"><BookOpen size={10}/> Académico</h4>
-                                  <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Carrera" value={editForm.carrera} onChange={(e) => setEditForm({...editForm, carrera: e.target.value})} />
-                                  <input className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Tipo Programa" value={editForm.tipo_programa} onChange={(e) => setEditForm({...editForm, tipo_programa: e.target.value})} />
-                                  <div className="grid grid-cols-2 gap-2">
-                                      <input className="bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Sede" value={editForm.sede} onChange={(e) => setEditForm({...editForm, sede: e.target.value})} />
-                                      <input className="bg-slate-900 border border-slate-700 rounded p-2 text-xs text-white" placeholder="Año Egreso" value={editForm.anio_egreso} onChange={(e) => setEditForm({...editForm, anio_egreso: e.target.value})} />
-                                  </div>
-                              </div>
-
-                              {/* Sección 4: Estado */}
-                              <div className="space-y-2">
-                                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1"><Activity size={10}/> Estado</h4>
-                                  <select 
-                                      value={editForm.status} 
-                                      onChange={(e) => setEditForm({...editForm, status: e.target.value})}
-                                      className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded p-2"
-                                  >
-                                      {STUDENT_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
-                                  </select>
-                              </div>
-
-                              <button onClick={saveEditing} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold text-xs flex items-center justify-center gap-2 mt-4 transition-colors">
-                                  <Save size={14} /> GUARDAR CAMBIOS
-                              </button>
-                          </div>
-                      ) : (
-                          // --- VISTA SOLO LECTURA ---
-                          <div className="space-y-4">
-                              <div className="space-y-2">
-                                  <label className="text-xs font-bold text-slate-500 uppercase block">Estado Actual</label>
-                                  <select 
-                                      value={selectedStudent.status || "Sólo preguntó"} 
-                                      onChange={(e) => handleQuickUpdate('status', e.target.value)}
-                                      className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded-lg p-2.5 focus:border-blue-500 outline-none"
-                                  >
-                                      {STUDENT_STATUSES.map(st => <option key={st} value={st}>{st}</option>)}
-                                  </select>
-                              </div>
-
-                              <div className="bg-slate-900/50 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
-                                  <span className="text-xs font-bold text-slate-400 flex items-center gap-2">
-                                      <Bot size={16} /> IA Activa
-                                  </span>
-                                  <button 
-                                      onClick={() => handleQuickUpdate('bot_active', !selectedStudent['bot active'])}
-                                      className={`w-10 h-5 rounded-full p-1 flex items-center transition-colors ${selectedStudent['bot active'] ? 'bg-green-600 justify-end' : 'bg-slate-700 justify-start'}`}
-                                  >
-                                      <div className="w-3 h-3 bg-white rounded-full shadow-md"></div>
-                                  </button>
-                              </div>
-
-                              <div className="space-y-4 pt-2">
-                                  {/* Contacto */}
-                                  <div className="space-y-2">
-                                      <h4 className="text-[10px] uppercase text-slate-600 font-bold border-b border-slate-800 pb-1">Contacto</h4>
-                                      <div className="flex items-start gap-3">
-                                          <Phone size={14} className="text-slate-500 mt-1"/>
-                                          <div className="text-sm">
-                                              <p className="text-white">{selectedStudent.telefono1 || '-'}</p>
-                                              {selectedStudent.telefono2 && <p className="text-slate-400 text-xs">{selectedStudent.telefono2}</p>}
-                                          </div>
-                                      </div>
-                                      <div className="flex items-start gap-3">
-                                          <Mail size={14} className="text-slate-500 mt-1"/>
-                                          <div className="text-sm break-all">
-                                              <p className="text-white">{selectedStudent['correo Personal'] || '-'}</p>
-                                              {selectedStudent['correo Corporativo'] && <p className="text-blue-400 text-xs">{selectedStudent['correo Corporativo']}</p>}
-                                          </div>
-                                      </div>
-                                  </div>
-
-                                  {/* Académico */}
-                                  <div className="space-y-2">
-                                      <h4 className="text-[10px] uppercase text-slate-600 font-bold border-b border-slate-800 pb-1">Académico</h4>
-                                      <InfoItem label="Carrera" value={selectedStudent['nombrePrograma']} icon={<BookOpen size={12}/>}/>
-                                      <InfoItem label="Sede" value={selectedStudent['codPuntoKennedy']} icon={<MapPin size={12}/>}/>
-                                      <div className="grid grid-cols-2 gap-2">
-                                          <InfoItem label="Legajo" value={selectedStudent.legdef} icon={<Hash size={12}/>}/>
-                                          <InfoItem label="Egreso" value={selectedStudent['anio De Egreso']} icon={<Calendar size={12}/>}/>
-                                      </div>
-                                  </div>
-                              </div>
-                          </div>
-                      )}
-
-                      {selectedStudent['solicita secretaria'] && !isEditing && (
-                          <div className="mt-6 pt-6 border-t border-slate-800">
-                              <button onClick={() => handleQuickUpdate('solicita_secretaria', false)} className="w-full py-3 bg-green-600 text-white rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2">
-                                  <CheckCircle2 size={16} /> Marcar Atendido
-                              </button>
-                          </div>
-                      )}
-                    </GlassCard>
-                  </div>
-
-                  {/* PANEL DERECHO: CHAT + IA */}
-                  <div className="lg:col-span-2 flex flex-col gap-6">
-                      
-                      {/* 1. CHAT HISTORY */}
-                      <GlassCard className="flex flex-col border-slate-800 overflow-hidden h-[500px] md:h-auto md:min-h-[500px]">
+                 {/* Panel Derecho: Chat */}
+                 <div className="lg:col-span-2 flex flex-col gap-6">
+                      <GlassCard className="flex flex-col border-slate-800 overflow-hidden h-[600px]">
                           <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-950/30 custom-scrollbar">
                               {chatHistory.length === 0 ? (
                                   <div className="flex flex-col items-center justify-center h-full text-slate-600 opacity-50">
-                                      <MessageSquare size={48} className="mb-4" />
-                                      <p>Sin historial</p>
+                                      <MessageSquare size={48} className="mb-4"/>
+                                      <p>Sin historial reciente</p>
                                   </div>
                               ) : (
                                   chatHistory.map((msg) => (
                                       <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
-                                          <div className={`max-w-[85%] md:max-w-[70%] rounded-2xl p-3 text-sm leading-relaxed shadow-md ${
-                                              msg.role === 'user' 
-                                              ? 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700' 
-                                              : 'bg-blue-600 text-white rounded-tr-none'
-                                          }`}>
+                                          <div className={`max-w-[85%] rounded-2xl p-3 text-sm leading-relaxed shadow-md ${msg.role === 'user' ? 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700' : 'bg-blue-600 text-white rounded-tr-none'}`}>
                                               {renderMessageContent(msg.content)}
                                           </div>
                                       </div>
                                   ))
                               )}
-                              <div ref={messagesEndRef} />
+                              <div ref={messagesEndRef}/>
                           </div>
-                          
                           <div className="p-3 bg-slate-900 border-t border-slate-800">
                               <form onSubmit={handleSendMessage} className="flex gap-2">
-                                  <input type="text" className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none" placeholder="Escribir..." value={messageInput} onChange={(e) => setMessageInput(e.target.value)} />
-                                  <button type="submit" className="bg-blue-600 text-white p-3 rounded-xl"><Send size={20} /></button>
+                                  <input className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none" placeholder="Escribir mensaje..." value={messageInput} onChange={e=>setMessageInput(e.target.value)}/>
+                                  <button type="submit" className="bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl transition-colors"><Send size={20}/></button>
                               </form>
                           </div>
                       </GlassCard>
 
-                      {/* 2. ASISTENTE IA */}
                       <GlassCard className="flex flex-col border-blue-500/20 bg-blue-900/5">
                             <div className="px-4 py-3 border-b border-blue-500/20 flex items-center gap-2 text-blue-400 bg-blue-900/20">
-                                <Sparkles size={16} />
-                                <h3 className="font-bold text-xs uppercase tracking-widest">Asistente IA</h3>
+                                <Sparkles size={16} /> <h3 className="font-bold text-xs uppercase tracking-widest">Asistente IA</h3>
                             </div>
-                            <div className="p-4 bg-slate-950/40 text-sm text-slate-300 leading-relaxed min-h-[80px]">
-                                {analyzing ? <div className="text-blue-400 animate-pulse text-center">Analizando...</div> : aiAnswer || <div className="text-slate-600 text-center italic text-xs">"Pregúntame sobre el alumno. Puedo leer su historial y documentos."</div>}
+                            <div className="p-4 bg-slate-950/40 text-sm text-slate-300 leading-relaxed min-h-[60px]">
+                                {analyzing ? <div className="text-blue-400 animate-pulse">Analizando...</div> : aiAnswer || <span className="text-slate-600 italic text-xs">Consulta sobre el alumno o sus documentos.</span>}
                             </div>
                             <div className="p-3 bg-slate-900/80 border-t border-blue-500/20">
                                 <form onSubmit={handleAskAI} className="flex gap-2">
-                                    <input type="text" placeholder="Ej: ¿Debe documentos?" className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none" value={aiQuestion} onChange={(e) => setAiQuestion(e.target.value)} />
-                                    <button disabled={analyzing} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase disabled:opacity-50">Preguntar</button>
+                                    <input className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 outline-none" placeholder="Ej: ¿Debe documentos?" value={aiQuestion} onChange={e=>setAiQuestion(e.target.value)}/>
+                                    <button disabled={analyzing} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase disabled:opacity-50">Preguntar</button>
                                 </form>
                             </div>
                       </GlassCard>
-                  </div>
-              </div>
-          )}
+                 </div>
+             </div>
+         )}
 
-          {/* C. STAFF */}
-          {activeTab === 'staff' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {staffList.map((staff) => (
-                      <GlassCard key={staff.id} className="p-6 relative">
-                          {!staff.rol && <div className="absolute top-0 right-0 bg-yellow-500 text-slate-900 text-[10px] font-bold px-2 py-1 uppercase">Pendiente</div>}
-                          <div className="flex items-center gap-3 mb-4">
-                              <div className="h-10 w-10 bg-slate-800 rounded-full flex items-center justify-center text-white font-bold">{staff.nombre?.substring(0,1)}</div>
-                              <div><h3 className="text-white font-bold text-sm">{staff.nombre}</h3><p className="text-xs text-slate-500">{staff.email}</p></div>
-                          </div>
-                          <div className="space-y-2 mb-4 text-xs">
-                              <div className="flex justify-between border-b border-slate-800/50 pb-2"><span className="text-slate-500">Rol</span><span className="text-white">{staff.rol || '-'}</span></div>
-                              <div className="flex justify-between border-b border-slate-800/50 pb-2"><span className="text-slate-500">Sede</span><span className="text-white">{staff.sede || '-'}</span></div>
-                          </div>
-                          {user.rol === 'admin' && (
-                              <div className="grid grid-cols-2 gap-2">
-                                  <button onClick={() => handleApproveStaff(staff.id, 'asesor', 'Catamarca')} className="bg-slate-800 text-xs py-2 rounded text-white border border-slate-700">Asesor</button>
-                                  <button onClick={() => handleApproveStaff(staff.id, 'secretaria', 'Catamarca')} className="bg-slate-800 text-xs py-2 rounded text-white border border-slate-700">Secretaria</button>
-                              </div>
-                          )}
-                           {user.rol === 'asesor' && !staff.rol && (
-                              <button onClick={() => handleApproveStaff(staff.id, 'secretaria', user.sede)} className="w-full bg-green-600/20 text-green-400 text-xs py-2 rounded border border-green-500/30 font-bold uppercase">Aprobar Secretaria</button>
-                          )}
-                      </GlassCard>
-                  ))}
-              </div>
-          )}
+         {/* 3. VISTA STAFF (Roles y Sede) */}
+         {activeTab === 'staff' && (
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                 {staffList.map((staff) => {
+                     // Check if this is the super admin account
+                     const isSuperAdmin = staff.email === SUPER_ADMIN_EMAIL;
 
-          {/* D. ADMIN (NUEVA SECCIÓN) */}
-          {activeTab === 'admin' && user?.rol === 'admin' && (
+                     return (
+                         <GlassCard key={staff.id} className={`p-6 relative group border-slate-800 hover:border-slate-700 transition-all ${!staff.rol ? 'opacity-50 grayscale' : ''}`}>
+                             
+                             {/* Delete Button: Hidden for Super Admin */}
+                             {user.rol === 'admin' && !isSuperAdmin && (
+                                 <button onClick={() => handleDeleteStaff(staff.id)} className="absolute top-4 right-4 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-500/10 rounded-full" title="Eliminar Usuario">
+                                     <Trash2 size={16}/>
+                                 </button>
+                             )}
+
+                             {/* Locked Icon for Super Admin */}
+                             {isSuperAdmin && (
+                                 <div className="absolute top-4 right-4 text-blue-500" title="Cuenta Protegida">
+                                     <Lock size={16}/>
+                                 </div>
+                             )}
+
+                             <div className="mb-4 flex items-center gap-3">
+                                 <div className="h-10 w-10 bg-slate-800 rounded-full flex items-center justify-center font-bold text-white">
+                                    {staff.nombre?.substring(0,1)}
+                                 </div>
+                                 <div>
+                                     <h3 className="text-white font-bold text-sm">{staff.nombre}</h3>
+                                     <p className="text-xs text-slate-500">{staff.email}</p>
+                                 </div>
+                             </div>
+                             <div className="space-y-4">
+                                 {/* Selector de ROL */}
+                                 <div className="space-y-1">
+                                     <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center gap-1"><Shield size={10}/> Rol Asignado</label>
+                                     <select 
+                                         value={staff.rol || 'null'} 
+                                         onChange={(e) => handleUpdateStaff(staff.id, e.target.value, staff.sede)}
+                                         className={`w-full bg-slate-950 border border-slate-800 text-white text-xs rounded p-2 focus:border-blue-500 outline-none ${!staff.rol ? 'text-red-400 border-red-900/30' : ''}`}
+                                         // Disable if not admin OR if it is the super admin account
+                                         disabled={user.rol !== 'admin' || isSuperAdmin}
+                                     >
+                                         <option value="null">🚫 Inactivo / Sin Acceso</option>
+                                         <option value="asesor">👔 Asesor</option>
+                                         {user.rol === 'admin' && <option value="admin">🛡️ Admin</option>}
+                                     </select>
+                                 </div>
+
+                                 {/* Selector de SEDE */}
+                                 <div className="space-y-1">
+                                     <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center gap-1"><Map size={10}/> Sede Operativa</label>
+                                     <select 
+                                         value={staff.sede || ''}
+                                         onChange={(e) => handleUpdateStaff(staff.id, staff.rol, e.target.value)}
+                                         className="w-full bg-slate-950 border border-slate-800 text-white text-xs rounded p-2 focus:border-blue-500 outline-none"
+                                         // Disable if not admin OR if it is the super admin account
+                                         disabled={user.rol !== 'admin' || isSuperAdmin}
+                                     >
+                                         <option value="">-- Sin Sede --</option>
+                                         {SEDES_KENNEDY.map(sede => (
+                                             <option key={sede} value={sede}>{sede}</option>
+                                         ))}
+                                     </select>
+                                 </div>
+                             </div>
+                         </GlassCard>
+                     );
+                 })}
+             </div>
+         )}
+
+         {/* 4. VISTA CARRERAS (Lista) */}
+         {activeTab === 'careers' && (
+             <div className="space-y-4">
+                 <div className="grid gap-3">
+                     {careers.map((c) => (
+                         <GlassCard key={c.id} className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-800/50 transition-all" onClick={() => handleCareerClick(c)}>
+                             <div>
+                                 <h3 className="font-bold text-white text-sm">{c.CARRERA}</h3>
+                                 <p className="text-xs text-slate-500 mt-1">{c["DURACIÓN"]} | {c["MODALIDAD DE CURSADO"]}</p>
+                             </div>
+                             <div className="flex items-center gap-4">
+                                <span className="text-blue-400 font-mono text-sm font-bold bg-blue-500/10 px-3 py-1 rounded-lg">${c["ARANCEL CUATRIMESTRAL"]}</span>
+                                <Eye size={16} className="text-slate-600"/>
+                             </div>
+                         </GlassCard>
+                     ))}
+                 </div>
+             </div>
+         )}
+         
+         {/* 5. VISTA ADMIN (Global Bot) */}
+         {activeTab === 'admin' && (
              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <GlassCard className="p-8 flex flex-col items-center justify-center text-center space-y-6 border-red-900/30 bg-red-950/10">
-                    <div className="h-20 w-20 rounded-full bg-slate-900 flex items-center justify-center border border-slate-700">
-                        <Bot size={40} className={globalBotActive ? "text-green-500" : "text-slate-600"} />
+                    <div className="h-20 w-20 rounded-full bg-slate-900 flex items-center justify-center border border-slate-700 shadow-xl">
+                        <Bot size={40} className={globalBotActive ? "text-green-500 drop-shadow-[0_0_10px_rgba(34,197,94,0.5)]" : "text-slate-600"} />
                     </div>
-                    
                     <div>
                         <h2 className="text-2xl font-bold text-white">Estado Global del Bot</h2>
-                        <p className="text-slate-400 mt-2 max-w-sm mx-auto">
-                            Este interruptor controla la disponibilidad del Bot de IA para <b>todos</b> los alumnos del sistema.
-                        </p>
+                        <p className="text-slate-400 mt-2 max-w-sm mx-auto text-sm">Este interruptor apaga la IA para todos los alumnos en caso de emergencia.</p>
                     </div>
-
-                    <button 
-                        onClick={toggleSystemBot}
-                        className={`group relative px-8 py-4 rounded-2xl font-bold text-lg transition-all flex items-center gap-4 ${
-                            globalBotActive 
-                            ? 'bg-green-600 hover:bg-green-500 text-white shadow-[0_0_20px_rgba(22,163,74,0.3)]' 
-                            : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
-                        }`}
-                    >
-                        <Power size={24} className={globalBotActive ? "text-white" : "text-slate-500"} />
-                        {globalBotActive ? "SISTEMA ACTIVO" : "SISTEMA APAGADO"}
-                        
-                        {/* Indicador visual de estado */}
-                        <span className={`absolute top-0 right-0 -mt-1 -mr-1 flex h-3 w-3`}>
-                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${globalBotActive ? 'bg-green-400' : 'hidden'}`}></span>
-                          <span className={`relative inline-flex rounded-full h-3 w-3 ${globalBotActive ? 'bg-green-500' : 'bg-slate-500'}`}></span>
-                        </span>
+                    <button onClick={toggleSystemBot} className={`group relative px-8 py-4 rounded-2xl font-bold text-lg transition-all flex items-center gap-4 ${globalBotActive ? 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-900/20' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}`}>
+                        <Power size={24}/> {globalBotActive ? "SISTEMA ONLINE" : "SISTEMA OFFLINE"}
                     </button>
-                    
-                    <div className="pt-6 border-t border-slate-800/50 w-full">
-                        <p className="text-xs text-slate-500 uppercase tracking-widest font-bold">Registro de Actividad</p>
-                        <div className="mt-2 text-xs text-slate-400 font-mono bg-slate-900 p-2 rounded">
-                            [LOG] Bot status check: {globalBotActive ? 'ONLINE' : 'OFFLINE'}
-                        </div>
-                    </div>
-                </GlassCard>
-
-                <GlassCard className="p-6">
-                    <h3 className="font-bold text-white mb-4 flex items-center gap-2">
-                        <Shield size={18} className="text-blue-400"/> Información de Admin
-                    </h3>
-                    <div className="space-y-4">
-                        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-                            <span className="text-xs text-slate-500 uppercase block mb-1">Tu ID de Sesión</span>
-                            <code className="text-blue-400 text-xs">{user.id}</code>
-                        </div>
-                        <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-                            <span className="text-xs text-slate-500 uppercase block mb-1">Permisos</span>
-                            <div className="flex gap-2">
-                                <span className="px-2 py-1 bg-green-500/20 text-green-400 text-[10px] font-bold rounded uppercase">Lectura Total</span>
-                                <span className="px-2 py-1 bg-green-500/20 text-green-400 text-[10px] font-bold rounded uppercase">Edición Total</span>
-                                <span className="px-2 py-1 bg-red-500/20 text-red-400 text-[10px] font-bold rounded uppercase">Control Bot</span>
-                            </div>
-                        </div>
-                    </div>
                 </GlassCard>
              </div>
-          )}
+         )}
 
-          {/* D. CARRERAS */}
-          {activeTab === 'careers' && (
-              <GlassCard className="p-0 overflow-hidden">
-                  <div className="overflow-x-auto">
-                      <table className="w-full text-left text-sm text-slate-400 min-w-[600px]">
-                          <thead className="bg-slate-900/50 text-slate-200 uppercase text-xs font-bold">
-                              <tr><th className="p-4">Carrera</th><th className="p-4">Duración</th><th className="p-4">Arancel</th></tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-800">
-                              {careers.map((c) => (
-                                  <tr key={c.id} className="hover:bg-slate-800/30">
-                                      <td className="p-4 font-medium text-white">{c.CARRERA}</td>
-                                      <td className="p-4">{c['DURACIÓN']}</td>
-                                      <td className="p-4 font-mono text-blue-400">${c['ARANCEL CUATRIMESTRAL']}</td>
-                                  </tr>
-                              ))}
-                          </tbody>
-                      </table>
-                  </div>
-              </GlassCard>
-          )}
-
-        </div>
       </main>
 
-      {/* 3. MOBILE NAVBAR */}
-      <nav className="md:hidden fixed bottom-0 w-full bg-slate-900 border-t border-slate-800 flex justify-around p-2 z-50 pb-safe">
-        <MobileNavItem icon={<Users size={20} />} label="Alumnos" active={activeTab === 'students'} onClick={() => {setActiveTab('students'); setSelectedStudent(null); fetchData();}} />
-        <MobileNavItem icon={<GraduationCap size={20} />} label="Carreras" active={activeTab === 'careers'} onClick={() => setActiveTab('careers')} />
-        {(user?.rol === 'admin' || user?.rol === 'asesor') && (
-            <MobileNavItem icon={<UserPlus size={20} />} label="Equipo" active={activeTab === 'staff'} onClick={() => { setActiveTab('staff'); fetchStaff(); }} />
-        )}
-        {user?.rol === 'admin' && (
-            <MobileNavItem icon={<Shield size={20} className="text-red-400" />} label="Admin" active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} />
-        )}
-        <button onClick={() => { localStorage.clear(); navigate('/login'); }} className="flex flex-col items-center gap-1 p-2 text-red-400">
-            <LogOut size={20} />
-            <span className="text-[10px] font-medium">Salir</span>
-        </button>
-      </nav>
+      {/* --- MODALES --- */}
+
+      {/* MODAL CREAR ALUMNO */}
+      {showCreateStudentModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <GlassCard className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-8 border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-300">
+                  <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
+                      <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Plus size={24} className="text-blue-500"/> Nuevo Alumno</h2>
+                      <button onClick={() => setShowCreateStudentModal(false)} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white"><X/></button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                      {Object.keys(EMPTY_STUDENT).filter(k => k !== 'id' && k !== 'created_at' && k !== 'solicita secretaria' && k !== 'bot active').map((key) => (
+                          <div key={key} className="space-y-1">
+                              <label className="text-[10px] text-blue-400 uppercase font-bold tracking-wider">{key.replace(/_/g, ' ')}</label>
+                              {key === 'status' ? (
+                                  <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-blue-500 outline-none" value={newStudentForm[key]} onChange={e => setNewStudentForm({...newStudentForm, [key]: e.target.value})}>
+                                      {STUDENT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                              ) : (
+                                  <input className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-blue-500 outline-none" value={newStudentForm[key]} onChange={(e) => setNewStudentForm({...newStudentForm, [key]: e.target.value})}/>
+                              )}
+                          </div>
+                      ))}
+                  </div>
+                  <button onClick={handleCreateStudent} className="w-full mt-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold uppercase tracking-widest shadow-lg transform active:scale-[0.98] transition-all">CREAR FICHA</button>
+              </GlassCard>
+          </div>
+      )}
+
+      {/* MODAL EDITAR ALUMNO */}
+      {showEditStudentModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <GlassCard className="w-full max-w-2xl max-h-[90vh] overflow-y-auto p-8 border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-300">
+                  <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
+                      <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Pencil size={24} className="text-blue-500"/> Editar Alumno</h2>
+                      <button onClick={() => setShowEditStudentModal(false)} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white"><X/></button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                      {Object.keys(EMPTY_STUDENT).filter(k => k !== 'id' && k !== 'created_at' && k !== 'solicita secretaria' && k !== 'bot active').map((key) => (
+                          <div key={key} className="space-y-1">
+                              <label className="text-[10px] text-blue-400 uppercase font-bold tracking-wider">{key.replace(/_/g, ' ')}</label>
+                              {key === 'status' ? (
+                                  <select className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-blue-500 outline-none" value={editStudentForm[key]} onChange={e => setEditStudentForm({...editStudentForm, [key]: e.target.value})}>
+                                      {STUDENT_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                              ) : (
+                                  <input className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-blue-500 outline-none" value={editStudentForm[key] || ''} onChange={(e) => setEditStudentForm({...editStudentForm, [key]: e.target.value})}/>
+                              )}
+                          </div>
+                      ))}
+                  </div>
+                  <button onClick={saveStudentChanges} className="w-full mt-8 py-4 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold uppercase tracking-widest shadow-lg transform active:scale-[0.98] transition-all">GUARDAR CAMBIOS</button>
+              </GlassCard>
+          </div>
+      )}
+
+      {/* MODAL DETALLE/EDICIÓN CARRERA */}
+      {selectedCareer && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+              <GlassCard className="w-full max-w-4xl max-h-[90vh] overflow-y-auto p-8 border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-300">
+                    <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4 sticky top-0 bg-slate-950/80 backdrop-blur-md z-10">
+                      <div className="w-full pr-4">
+                          <label className="text-[10px] text-blue-500 uppercase font-bold tracking-wider block mb-1">Nombre de la Carrera</label>
+                          <input 
+                            className="bg-transparent border-b border-slate-700 w-full text-2xl font-bold text-white focus:border-blue-500 outline-none pb-1" 
+                            value={isEditingCareer ? editCareerForm.CARRERA : selectedCareer.CARRERA} 
+                            readOnly={!isEditingCareer}
+                            onChange={e=>setEditCareerForm({...editCareerForm, CARRERA: e.target.value})}
+                          />
+                      </div>
+                      <div className="flex gap-2 shrink-0 items-center">
+                          {/* Solo Admin y Asesor pueden ver el botón editar */}
+                          {(user?.rol === 'admin' || user?.rol === 'asesor') && (
+                              <button onClick={() => setIsEditingCareer(!isEditingCareer)} className={`px-4 py-2 rounded-lg font-bold text-xs uppercase flex items-center gap-2 transition-all ${isEditingCareer ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}>
+                                  <Pencil size={14}/> {isEditingCareer ? 'Editando' : 'Editar'}
+                              </button>
+                          )}
+                          <button onClick={() => setSelectedCareer(null)} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white hover:bg-slate-700"><X size={20}/></button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {Object.keys(selectedCareer).filter(k => k !== 'id' && k !== 'created_at' && k !== 'CARRERA').map(key => (
+                            <div key={key} className={`space-y-1 ${['DIAGRAMACIÓN DE MATERIAS', 'PERFIL DEL EGRESADO', 'ALCANCE DEL TÍTULO'].some(long => key.includes(long)) ? 'md:col-span-2' : ''}`}>
+                                <label className="text-[10px] text-blue-400 uppercase font-bold tracking-wider">{key}</label>
+                                {isEditingCareer ? (
+                                    <textarea 
+                                      className="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 min-h-[80px] focus:border-blue-500 outline-none custom-scrollbar focus:bg-slate-900 transition-colors"
+                                      value={editCareerForm[key] || ''}
+                                      onChange={e => setEditCareerForm({...editCareerForm, [key]: e.target.value})}
+                                    />
+                                ) : (
+                                    <div className="text-sm text-slate-300 whitespace-pre-wrap bg-slate-900/30 p-4 rounded-lg border border-slate-800/50 min-h-[50px]">
+                                        {selectedCareer[key] || <span className="text-slate-600 italic">No especificado</span>}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+
+                    {isEditingCareer && (
+                        <div className="sticky bottom-0 bg-slate-950/80 backdrop-blur-md pt-4 mt-8 border-t border-slate-800 flex justify-end gap-4">
+                            <button onClick={() => setIsEditingCareer(false)} className="px-6 py-3 rounded-xl font-bold text-sm text-slate-400 hover:text-white transition-colors">Cancelar</button>
+                            <button onClick={saveCareerChanges} className="px-8 py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold uppercase tracking-widest shadow-lg transform active:scale-[0.98] transition-all flex items-center gap-2">
+                                <CheckCircle2 size={18}/> Guardar Cambios
+                            </button>
+                        </div>
+                    )}
+              </GlassCard>
+          </div>
+      )}
 
     </div>
   );
 }
 
-// Componentes Helper
 function NavItem({ icon, label, active, onClick }: any) {
     return (
         <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all group ${active ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
             {icon} <span className="hidden lg:block font-medium text-sm">{label}</span>
-        </button>
-    );
-}
-
-function MobileNavItem({ icon, label, active, onClick }: any) {
-    return (
-        <button onClick={onClick} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-all ${active ? 'text-blue-500 bg-blue-500/10' : 'text-slate-500'}`}>
-            {icon} <span className="text-[10px] font-medium">{label}</span>
         </button>
     );
 }
