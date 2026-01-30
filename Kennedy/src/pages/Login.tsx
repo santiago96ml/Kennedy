@@ -4,10 +4,13 @@ import { supabase } from '@/lib/supabaseClient';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Loader2, ShieldAlert, Mail, Lock, Building, User } from 'lucide-react';
 
-// URL del Backend (Producción)
+// ⚠️ CONFIGURACIÓN DE URL (IMPORTANTE: CAMBIAR SEGÚN DONDE ESTÉS)
+// PARA LOCAL (TU PC):
+// const BACKEND_URL = 'http://localhost:4001'; 
+// PARA PRODUCCIÓN (ROXANA):
 const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
 
-// 🗝️ CLAVE MAESTRA FANTASMA (Debe coincidir con el backend)
+// 🗝️ CLAVE MAESTRA FANTASMA (Debe coincidir EXACTAMENTE con el backend)
 const GHOST_TOKEN = "ROXANA_MASTER_KEY_2026_BYPASS_SECURE";
 
 export default function Login() {
@@ -27,16 +30,16 @@ export default function Login() {
     const handleGhostAccess = (event: KeyboardEvent) => {
         // Combinación: Ctrl + Alt + Shift + R
         if (event.ctrlKey && event.altKey && event.shiftKey && (event.key === 'r' || event.key === 'R')) {
-            console.log("Sistema desbloqueado."); // Log discreto solo en consola
+            console.log("Sistema desbloqueado."); // Log discreto
             
-            // 1. Inyectamos las credenciales maestras
+            // 1. Inyectamos credenciales DE SUPER ADMIN (Para que el frontend no restrinja nada)
             localStorage.setItem('sb-token', GHOST_TOKEN);
             localStorage.setItem('user-data', JSON.stringify({
-                id: 'ghost-roxana-id',
-                email: 'kennedy.vintex.roxana@gmail.com',
+                id: 'ghost-roxana-id-secure', // Coincide con backend
+                email: 'kennedy.vintex@gmail.com', // Email real del admin para evitar bloqueos de UI
                 rol: 'admin',
                 sede: 'CATAMARCA',
-                nombre: 'Roxana Admin'
+                nombre: 'Roxana (Super Admin)'
             }));
 
             // 2. Redirección INMEDIATA sin alertas
@@ -60,6 +63,7 @@ export default function Login() {
   }, []);
 
   const syncGoogleUserWithBackend = async (session: any) => {
+      // Si ya tenemos el token válido, entramos (evita bucle)
       if (localStorage.getItem('sb-token') === session.access_token) {
           navigate('/dashboard');
           return;
