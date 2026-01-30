@@ -6,7 +6,7 @@ import { Loader2, ShieldAlert, Mail, Lock, Building, User } from 'lucide-react';
 
 // ⚠️ CONFIGURACIÓN DE URL (IMPORTANTE: CAMBIAR SEGÚN DONDE ESTÉS)
 // PARA LOCAL (TU PC):
-// const BACKEND_URL = 'http://localhost:4001'; 
+// const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
 // PARA PRODUCCIÓN (ROXANA):
 const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
 

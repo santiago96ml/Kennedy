@@ -6,10 +6,10 @@ import {
   Users, GraduationCap, MessageSquare, LogOut, 
   CheckCircle2, AlertCircle, Send, ChevronRight, UserPlus, 
   Bot, Sparkles, Pencil, X, Phone, Mail, MapPin, BookOpen,
-  Shield, Power, Activity, Trash2, Plus, Loader2, Eye, Map, Lock, StickyNote, Save, Menu
+  Shield, Power, Activity, Trash2, Plus, Loader2, Eye, Map, StickyNote, Save, Menu
 } from 'lucide-react';
 
-const API_URL = 'http://localhost:4001';
+const API_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host';
 const SUPER_ADMIN_EMAIL = 'kennedy.vintex@gmail.com';
 
 const STUDENT_STATUSES = [

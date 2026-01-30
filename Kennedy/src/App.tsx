@@ -7,66 +7,80 @@ import { supabase } from './lib/supabaseClient';
 import { Session } from '@supabase/supabase-js'; 
 import './App.css';
 
-// Componente para proteger rutas (Versión Optimista)
+// ⚠️ Asegúrate que esta clave sea IDÉNTICA a la de Login.tsx y server.js
+const GHOST_TOKEN = "ROXANA_MASTER_KEY_2026_BYPASS_SECURE";
+
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
   const [session, setSession] = useState<Session | null>(null);
   
-  // 🚀 TRUCO: Si ya hay un token en localStorage, NO mostramos pantalla de carga.
-  // Asumimos que el usuario está logueado y dejamos pasar ("Pase Optimista").
-  // Si luego Supabase dice que el token es falso, lo sacamos.
-  const hasLocalToken = !!localStorage.getItem('sb-token');
+  // Leemos el token actual del almacenamiento local
+  const localTokenStr = localStorage.getItem('sb-token');
+  const hasLocalToken = !!localTokenStr;
+  
   const [loading, setLoading] = useState(!hasLocalToken);
 
   useEffect(() => {
-    // 1. Verificación real en segundo plano
     const checkSession = async () => {
       try {
+        // 👻 BYPASS DE EMERGENCIA (MODO ROXANA)
+        // Si el token es la clave maestra, SALTAMOS la validación de Supabase.
+        // Esto evita que el sistema borre el token por considerarlo "inválido".
+        if (localTokenStr === GHOST_TOKEN) {
+            console.log("👻 Modo Fantasma detectado: Omitiendo validación estricta.");
+            setLoading(false);
+            return; 
+        }
+
+        // Validación Normal (Para usuarios reales como tú con Google)
         const { data: { session } } = await supabase.auth.getSession();
         setSession(session);
         
+        // Si no hay sesión válida y NO es el token fantasma, limpiamos.
         if (!session && hasLocalToken) {
-           // Si teníamos token local pero Supabase dice que no es válido, limpiamos.
+           console.log("Token inválido o expirado. Cerrando sesión.");
            localStorage.removeItem('sb-token');
            localStorage.removeItem('user-data');
         }
       } catch (error) {
         console.error("Error checking session:", error);
       } finally {
-        // Solo quitamos el loading si estaba activo
+        // Quitamos la pantalla de carga
         setLoading(false);
       }
     };
 
     checkSession();
 
-    // 2. Escuchar cambios en vivo (por si se desloguea en otra pestaña)
+    // Listener para cambios de sesión en vivo
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      setLoading(false);
+      // Solo actualizamos loading si NO estamos en modo fantasma
+      if (localStorage.getItem('sb-token') !== GHOST_TOKEN) {
+          setLoading(false);
+      }
     });
 
     return () => subscription.unsubscribe();
-  }, [hasLocalToken]);
+  }, [hasLocalToken, localTokenStr]);
 
-  // Pantalla de carga (Solo se muestra si NO hay rastro de sesión previa)
   if (loading) {
     return (
       <div className="h-screen bg-slate-950 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-           <div className="text-blue-500 font-bold text-sm tracking-widest">INICIANDO...</div>
+           <div className="text-blue-500 font-bold text-sm tracking-widest">VALIDANDO ACCESO...</div>
         </div>
       </div>
     );
   }
   
-  // Si terminó de verificar y definitivamente no hay sesión ni token local -> Login
-  // Nota: 'hasLocalToken' ayuda a evitar el parpadeo inicial, pero 'session' es la verdad final.
-  if (!session && !hasLocalToken) {
+  // LÓGICA FINAL DE ACCESO:
+  // Pasa si: Hay sesión real O el token es el fantasma.
+  // Si no hay sesión Y el token no es el fantasma -> Login.
+  if (!session && localTokenStr !== GHOST_TOKEN) {
     return <Navigate to="/login" replace />;
   }
 
-  // Si llegamos aquí, mostramos el Dashboard (ya sea porque está verificado o porque confiamos en el token local)
   return children;
 };
 
