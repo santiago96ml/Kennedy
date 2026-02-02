@@ -9,6 +9,7 @@ import {
   Shield, Power, Activity, Trash2, Plus, Loader2, Eye, Map, StickyNote, Save, Menu
 } from 'lucide-react';
 
+// URL Backend
 const API_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host';
 const SUPER_ADMIN_EMAIL = 'kennedy.vintex@gmail.com';
 
@@ -38,8 +39,6 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('students');
   const [user, setUser] = useState<any>(null);
-  
-  // 📱 NUEVO: Estado para el menú móvil
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   // Datos
@@ -103,7 +102,7 @@ export default function Dashboard() {
 
   const scrollToBottom = () => { setTimeout(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, 100); };
 
-  // --- FUNCIONES DE FETCH Y LÓGICA (Idénticas al original, solo minimizadas para lectura) ---
+  // --- FETCHING ---
   const fetchData = async () => {
     if (students.length === 0) setLoading(true);
     try {
@@ -116,16 +115,69 @@ export default function Dashboard() {
   const fetchCareers = async () => { const t = localStorage.getItem('sb-token'); const r = await fetch(`${API_URL}/api/careers`, { headers: { 'Authorization': `Bearer ${t}` }}); const d = await r.json(); setCareers(d); };
   const fetchStaff = async () => { const t = localStorage.getItem('sb-token'); const r = await fetch(`${API_URL}/api/staff`, { headers: { 'Authorization': `Bearer ${t}` }}); const d = await r.json(); setStaffList(d); };
   
+  // 🧠 [MEJORA CHAT] Lógica Avanzada para limpiar basura de n8n
+  const parseMessageBody = (content: any): string => {
+    if (content === null || content === undefined) return '';
+    
+    // Si es un objeto, buscamos propiedades comunes de n8n
+    if (typeof content === 'object') {
+      if (content.output?.message) return content.output.message; // Formato n8n común
+      if (content.message) return content.message;
+      if (content.text) return content.text; // Formato chatbot
+      
+      // Caso recursivo: a veces n8n anida el contenido
+      if (content.content) return parseMessageBody(content.content); 
+      
+      return JSON.stringify(content);
+    }
+    
+    // Si es string, intentamos ver si es un JSON oculto
+    if (typeof content === 'string') {
+      const clean = content.trim();
+      if (clean.startsWith('{') || clean.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(clean);
+          return parseMessageBody(parsed); // Recursión
+        } catch (e) {
+          // Si falla el parseo, devolvemos el texto tal cual
+          return clean;
+        }
+      }
+      return clean;
+    }
+    return String(content);
+  };
+
   const adaptChatHistory = (rawHistory: any[]) => {
     if (!Array.isArray(rawHistory)) return [];
     return rawHistory.map(row => {
-      if (row.role && row.content) return row;
+      // Intentamos obtener rol y contenido limpio
+      let role = 'user';
+      let content = '';
+
+      // Si ya viene formateado
+      if (row.role && row.content) {
+          return { ...row, content: parseMessageBody(row.content) };
+      }
+
+      // Si viene crudo de n8n (columna 'message' con JSON)
       try {
         let parsedMessage = row.message;
-        if (typeof parsedMessage === 'string') { try { parsedMessage = JSON.parse(parsedMessage); } catch(e) { return { id: row.id, role: 'user', content: row.message }; } }
-        if (parsedMessage && typeof parsedMessage === 'object') { return { id: row.id, role: parsedMessage.type === 'human' ? 'user' : 'assistant', content: parsedMessage.content }; }
-        return row;
-      } catch (e) { return row; }
+        if (typeof parsedMessage === 'string') {
+             try { parsedMessage = JSON.parse(parsedMessage); } catch(e) { /* es string plano */ }
+        }
+        
+        if (parsedMessage && typeof parsedMessage === 'object') {
+            role = (parsedMessage.type === 'human' || parsedMessage.role === 'user') ? 'user' : 'assistant';
+            content = parseMessageBody(parsedMessage);
+        } else {
+            content = parseMessageBody(row.message);
+        }
+      } catch (e) {
+        content = String(row.message);
+      }
+
+      return { id: row.id, role, content };
     });
   };
 
@@ -149,6 +201,7 @@ export default function Dashboard() {
       setChatHistory(prev => { if (JSON.stringify(prev) !== JSON.stringify(chats)) return chats; return prev; });
   };
 
+  // --- HANDLERS ACCIONES ---
   const handleCreateStudent = async () => {
       const token = localStorage.getItem('sb-token');
       try {
@@ -189,36 +242,16 @@ export default function Dashboard() {
   const handleSendMessage = async (e: React.FormEvent) => { e.preventDefault(); if (!messageInput.trim() || !selectedStudent) return; const token = localStorage.getItem('sb-token'); const phone = selectedStudent.telefono1 || selectedStudent.telefono2; if (!phone) return alert("El alumno no tiene teléfono registrado."); const tempMsg = { role: 'assistant', content: messageInput, id: Date.now() }; setChatHistory(prev => [...prev, tempMsg]); setMessageInput(''); await fetch(`${API_URL}/api/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ studentId: selectedStudent.id, phone, messageText: tempMsg.content }) }); };
   const handleAskAI = async (e: React.FormEvent) => { e.preventDefault(); if (!aiQuestion.trim() || !selectedStudent) return; setAnalyzing(true); setAiAnswer(''); try { const token = localStorage.getItem('sb-token'); const res = await fetch(`${API_URL}/api/bot/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ studentId: selectedStudent.id, question: aiQuestion }) }); const data = await res.json(); setAiAnswer(data.answer); } catch (err) { alert("Error IA"); } finally { setAnalyzing(false); } };
 
-  const parseMessageBody = (content: any): string => {
-    if (content === null || content === undefined) return '';
-    if (typeof content === 'object') {
-      if (content.output?.message) return content.output.message;
-      if (content.message) return content.message;
-      if (content.content && typeof content.content === 'string') return parseMessageBody(content.content); 
-      return JSON.stringify(content);
-    }
-    if (typeof content === 'string') {
-      const cleanContent = content.trim();
-      if (cleanContent.startsWith("Mensaje de la persona:")) return cleanContent.replace("Mensaje de la persona:", "").replace(/null/g, "").trim();
-      if (cleanContent.includes("[Used tools:") || cleanContent.includes("Tool:")) { const jsonMatch = cleanContent.match(/{\s*"output":\s*{[\s\S]*?}\s*}/); if (jsonMatch) { try { const parsed = JSON.parse(jsonMatch[0]); if (parsed.output?.message) return parsed.output.message; } catch(e){} } return ""; }
-      if (cleanContent.startsWith('{') || cleanContent.startsWith('[')) { try { const parsed = JSON.parse(cleanContent); return parseMessageBody(parsed); } catch (e) { return cleanContent; } }
-      return cleanContent;
-    }
-    return String(content);
-  };
-
-  const renderMessageContent = (rawContent: any) => {
-    let textToDisplay = parseMessageBody(rawContent);
-    if (typeof textToDisplay !== 'string') textToDisplay = "";
-    if (!textToDisplay || textToDisplay.trim() === "") return null;
+  const renderMessageContent = (cleanText: string) => {
+    if (!cleanText || cleanText.trim() === "") return null;
     const driveRegex = /https:\/\/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/g;
     const images: string[] = [];
     let match;
-    while ((match = driveRegex.exec(textToDisplay)) !== null) { images.push(match[1]); }
-    const cleanText = textToDisplay.replace(driveRegex, '').trim();
+    while ((match = driveRegex.exec(cleanText)) !== null) { images.push(match[1]); }
+    const textWithoutLinks = cleanText.replace(driveRegex, '').trim();
     return (
       <div className="flex flex-col gap-3">
-        {cleanText && (<p className="whitespace-pre-wrap break-words">{cleanText}</p>)}
+        {textWithoutLinks && (<p className="whitespace-pre-wrap break-words">{textWithoutLinks}</p>)}
         {images.length > 0 && (
           <div className="grid grid-cols-2 gap-2 mt-2">
             {images.map((fileId, idx) => (
@@ -237,7 +270,7 @@ export default function Dashboard() {
   return (
     <div className="flex min-h-screen bg-slate-950 text-slate-200 font-sans">
       
-      {/* 📱 HEADER MÓVIL (Solo visible en pantallas pequeñas) */}
+      {/* 📱 HEADER MÓVIL */}
       <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 z-50 flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
              <div className="h-8 w-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center font-black text-white text-sm">K</div>
@@ -248,13 +281,13 @@ export default function Dashboard() {
           </button>
       </div>
 
-      {/* 📱 SIDEBAR RESPONSIVO (Overlay en móvil, Fixed en desktop) */}
+      {/* 📱 SIDEBAR */}
       <aside className={`
           fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 border-r border-slate-800 flex flex-col p-4 transition-transform duration-300 ease-in-out
           ${showMobileMenu ? 'translate-x-0' : '-translate-x-full'} 
           md:relative md:translate-x-0 md:bg-slate-900/50 md:flex
       `}>
-        <div className="pt-16 md:pt-0"> {/* Padding top solo en móvil para no chocar con header */}
+        <div className="pt-16 md:pt-0"> 
           <div className="hidden md:flex items-center gap-3 mb-10 px-2">
             <div className="h-10 w-10 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-xl flex items-center justify-center shrink-0 shadow-lg">
               <span className="font-black text-white text-xl italic">K</span>
@@ -274,16 +307,14 @@ export default function Dashboard() {
         </button>
       </aside>
 
-      {/* 📱 FONDO OSCURO PARA MENÚ MÓVIL */}
+      {/* 📱 FONDO OSCURO */}
       {showMobileMenu && <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setShowMobileMenu(false)}></div>}
 
       {/* MAIN CONTENT */}
-      {/* 📱 CAMBIOS: Padding top agregado para el header móvil (pt-20) */}
       <main className="flex-1 p-4 md:p-6 max-w-7xl mx-auto mb-20 h-screen overflow-hidden flex flex-col pt-20 md:pt-6">
          <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 shrink-0">
             <h1 className="text-2xl font-bold text-white capitalize">{activeTab === 'chat' ? 'Expediente' : activeTab === 'students' ? 'Panel de Alumnos' : activeTab}</h1>
             
-            {/* BOTONES DE ACCIÓN PRINCIPAL */}
             <div className="flex gap-2 w-full md:w-auto">
                 {activeTab === 'students' && (user?.rol === 'admin' || user?.rol === 'asesor') && (
                     <>
@@ -302,7 +333,6 @@ export default function Dashboard() {
             </div>
          </header>
 
-         {/* CONTENEDOR CON SCROLL */}
          <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar pb-24 md:pb-0">
 
          {/* 1. LISTA ALUMNOS */}
@@ -330,7 +360,7 @@ export default function Dashboard() {
             </div>
          )}
 
-         {/* 2. CHAT ALUMNO RESPONSIVO */}
+         {/* 2. CHAT ALUMNO */}
          {activeTab === 'chat' && selectedStudent && (
              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pb-20">
                  {/* Panel Info del Alumno */}
@@ -345,7 +375,6 @@ export default function Dashboard() {
                                  <h2 className="text-xl font-bold text-white leading-tight">{selectedStudent.full_name}</h2>
                                  <p className="text-sm text-slate-500 mt-1">{selectedStudent["numero Identificacion"]}</p>
                              </div>
-                             {/* ... resto de info ... */}
                              <div className="space-y-4">
                                  <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
                                      <span className="text-xs font-bold text-slate-400 flex gap-2"><Bot size={16}/> IA Activa</span>
@@ -363,7 +392,7 @@ export default function Dashboard() {
                              </div>
                              <div className="border-t border-slate-800 pt-4">
                                  <label className="text-[10px] text-slate-400 uppercase font-bold tracking-wider flex items-center gap-2 mb-2"><StickyNote size={12} className="text-yellow-500"/> Notas Internas</label>
-                                 <textarea className="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-xs text-slate-300 focus:border-yellow-500/50 focus:bg-slate-900 outline-none resize-none h-24 mb-2" placeholder="Escribe recordatorios o tareas pendientes sobre este alumno..." value={studentNote} onChange={(e) => setStudentNote(e.target.value)} />
+                                 <textarea className="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-xs text-slate-300 focus:border-yellow-500/50 focus:bg-slate-900 outline-none resize-none h-24 mb-2" placeholder="Escribe recordatorios..." value={studentNote} onChange={(e) => setStudentNote(e.target.value)} />
                                  <button onClick={saveStudentNote} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-colors"><Save size={14}/> Guardar Nota</button>
                              </div>
                          </div>
@@ -379,7 +408,9 @@ export default function Dashboard() {
                               ) : (
                                   chatHistory.map((msg) => (
                                       <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
-                                          <div className={`max-w-[85%] rounded-2xl p-3 text-sm leading-relaxed shadow-md ${msg.role === 'user' ? 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700' : 'bg-blue-600 text-white rounded-tr-none'}`}>{renderMessageContent(msg.content)}</div>
+                                          <div className={`max-w-[85%] rounded-2xl p-3 text-sm leading-relaxed shadow-md ${msg.role === 'user' ? 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700' : 'bg-blue-600 text-white rounded-tr-none'}`}>
+                                            {renderMessageContent(msg.content)}
+                                          </div>
                                       </div>
                                   ))
                               )}
@@ -408,14 +439,13 @@ export default function Dashboard() {
              </div>
          )}
 
-         {/* 3. VISTA STAFF RESPONSIVA */}
+         {/* 3. VISTA STAFF (SIN SECRETARIA) */}
          {activeTab === 'staff' && (
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
                  {staffList.map((staff) => {
                      const isSuperAdmin = staff.email === SUPER_ADMIN_EMAIL;
                      return (
                          <GlassCard key={staff.id} className={`p-6 relative group border-slate-800 hover:border-slate-700 transition-all ${!staff.rol ? 'opacity-50 grayscale' : ''}`}>
-                             {/* ... Botones Admin ... */}
                              {user.rol === 'admin' && !isSuperAdmin && (
                                  <button onClick={() => handleDeleteStaff(staff.id)} className="absolute top-4 right-4 text-red-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-red-500/10 rounded-full" title="Eliminar Usuario"><Trash2 size={16}/></button>
                              )}
@@ -427,13 +457,15 @@ export default function Dashboard() {
                                  <div className="space-y-1">
                                      <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center gap-1"><Shield size={10}/> Rol Asignado</label>
                                      <select value={staff.rol || 'null'} onChange={(e) => handleUpdateStaff(staff.id, e.target.value, staff.sede)} className={`w-full bg-slate-950 border border-slate-800 text-white text-xs rounded p-2 focus:border-blue-500 outline-none ${!staff.rol ? 'text-red-400 border-red-900/30' : ''}`} disabled={user.rol !== 'admin' || isSuperAdmin}>
-                                         <option value="null">🚫 Inactivo / Sin Acceso</option><option value="asesor">👔 Asesor</option>{user.rol === 'admin' && <option value="admin">🛡️ Admin</option>}
+                                          <option value="null">🚫 Inactivo / Sin Acceso</option>
+                                          <option value="asesor">👔 Asesor</option>
+                                          {user.rol === 'admin' && <option value="admin">🛡️ Admin</option>}
                                      </select>
                                  </div>
                                  <div className="space-y-1">
                                      <label className="text-[10px] text-slate-500 uppercase font-bold tracking-wider flex items-center gap-1"><Map size={10}/> Sede Operativa</label>
                                      <select value={staff.sede || ''} onChange={(e) => handleUpdateStaff(staff.id, staff.rol, e.target.value)} className="w-full bg-slate-950 border border-slate-800 text-white text-xs rounded p-2 focus:border-blue-500 outline-none" disabled={user.rol !== 'admin' || isSuperAdmin}>
-                                         <option value="">-- Sin Sede --</option>{SEDES_KENNEDY.map(sede => (<option key={sede} value={sede}>{sede}</option>))}
+                                          <option value="">-- Sin Sede --</option>{SEDES_KENNEDY.map(sede => (<option key={sede} value={sede}>{sede}</option>))}
                                      </select>
                                  </div>
                              </div>
@@ -443,7 +475,7 @@ export default function Dashboard() {
              </div>
          )}
 
-         {/* 4. VISTA CARRERAS RESPONSIVA */}
+         {/* 4. VISTA CARRERAS */}
          {activeTab === 'careers' && (
              <div className="space-y-4 pb-20">
                  <div className="grid gap-3">
@@ -488,24 +520,20 @@ export default function Dashboard() {
          </div>
       </main>
 
-      {/* --- MODALES (Añadir clases responsivas: w-[95%] en vez de w-full) --- */}
-      {/* ... (El resto del código de modales es igual, solo asegura que los contenedores tengan "w-[95%] md:w-full") ... */}
+      {/* --- MODALES (Usando clases responsivas) --- */}
       
-      {/* Ejemplo en Modal Crear Carrera (Aplicar a todos): */}
+      {/* Modal Crear Carrera */}
       {showCreateCareerModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
               <GlassCard className="w-[95%] md:w-full max-w-4xl max-h-[90vh] overflow-y-auto p-4 md:p-8 border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-300 custom-scrollbar">
-                  {/* ... contenido del modal ... */}
                   <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-4">
                       <h2 className="text-xl md:text-2xl font-bold text-white flex items-center gap-2"><Plus size={24} className="text-indigo-500"/> Nueva Carrera</h2>
                       <button onClick={() => setShowCreateCareerModal(false)} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white"><X/></button>
                   </div>
-                  {/* ... formulario ... */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {Object.keys(EMPTY_CAREER).map((key) => (
                           <div key={key} className={`space-y-1 ${['DIAGRAMACIÓN DE MATERIAS', 'PERFIL DEL EGRESADO', 'ALCANCE DEL TÍTULO'].some(long => key.includes(long)) ? 'md:col-span-2' : ''}`}>
                               <label className="text-[10px] text-indigo-400 uppercase font-bold tracking-wider">{key}</label>
-                              {/* ... inputs ... */}
                               {key.includes("DIAGRAMACIÓN") || key.includes("TESIS") || key.includes("CLASES") ? (
                                   <textarea className="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-white focus:border-indigo-500 outline-none h-24" value={newCareerForm[key]} onChange={e => setNewCareerForm({...newCareerForm, [key]: e.target.value})} />
                               ) : (
@@ -519,7 +547,7 @@ export default function Dashboard() {
           </div>
       )}
 
-      {/* Aplicar la misma lógica de "w-[95%] md:w-full" y "p-4 md:p-8" a los otros modales */}
+      {/* Modal Crear Alumno */}
       {showCreateStudentModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
               <GlassCard className="w-[95%] md:w-full max-w-2xl max-h-[90vh] overflow-y-auto p-4 md:p-8 border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-300 custom-scrollbar">
@@ -546,6 +574,7 @@ export default function Dashboard() {
           </div>
       )}
 
+      {/* Modal Editar Alumno */}
       {showEditStudentModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
               <GlassCard className="w-[95%] md:w-full max-w-2xl max-h-[90vh] overflow-y-auto p-4 md:p-8 border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-300 custom-scrollbar">
@@ -572,6 +601,7 @@ export default function Dashboard() {
           </div>
       )}
 
+      {/* Modal Carrera */}
       {selectedCareer && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
               <GlassCard className="w-[95%] md:w-full max-w-4xl max-h-[90vh] overflow-y-auto p-4 md:p-8 border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-300 custom-scrollbar">
@@ -618,7 +648,6 @@ function NavItem({ icon, label, active, onClick }: any) {
     return (
         <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all group ${active ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
             {icon} <span className="hidden lg:block font-medium text-sm">{label}</span>
-            {/* Mostrar label en móvil también cuando está en el menú */}
             <span className="lg:hidden block font-medium text-sm md:hidden">{label}</span>
         </button>
     );
