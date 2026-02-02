@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 // URL Backend
-const API_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host';
+const API_URL = 'http://localhost:4001';
 const SUPER_ADMIN_EMAIL = 'kennedy.vintex@gmail.com';
 
 const STUDENT_STATUSES = [

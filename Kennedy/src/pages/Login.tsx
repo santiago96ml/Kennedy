@@ -5,7 +5,7 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { Loader2, ShieldAlert, Mail, Lock, Building, User } from 'lucide-react';
 
 // ⚠️ URL del Backend
-const BACKEND_URL = 'https://webs-de-vintex-kennedy.1kh9sk.easypanel.host'; 
+const BACKEND_URL = 'http://localhost:4001'; 
 
 export default function Login() {
   const navigate = useNavigate();
